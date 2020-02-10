@@ -1,29 +1,29 @@
 classdef OHOExperiments
     properties
-        n_train = 200;
-        n_test  = 2000;
-        p       = 100;
-        seed    = 3;
-        sigma   = 0.3;
-        b_colinear = 0;
+        n_train = 200;     % Number of train samples
+        n_test  = 2000;    % Number of test  samples
+        p       = 100;     % Dimensionality of dataset
+        seed    = 3;       % Random seed
+        sigma   = 0.3;     % Variance of the noise
+        b_colinear = 0; %introduce colinear variables (see set_up_data method)
     end
       
-methods
+methods % Constructor and synthetic-data creating procedure
     
     function obj = OHOExperiments() %The constructor sets the path
         addpath('Stepsizes/')
         addpath('utilities/')
     end
+    
     function [A_train, A_test, y_train, y_test, true_x] = ...
-            set_up_data(obj)
-        
+            set_up_data(obj)        
         rng(obj.seed);
-        %create correlated variables
-        block_size = 10;
-        block_rank = 8; assert(block_rank<block_size);
-        n_blocks = obj.p/block_size; assert(n_blocks==uint8(n_blocks))
-        t_block = cell(n_blocks, 1);
-        if obj.b_colinear
+        
+        if obj.b_colinear % create correlated variables           
+            block_size = 10;
+            block_rank = 8; assert(block_rank<block_size);
+            n_blocks = obj.p/block_size; assert(n_blocks==uint8(n_blocks))
+            t_block = cell(n_blocks, 1);
             for b = 1:n_blocks
                 m_rectangular = randn(block_size, block_rank);
                 t_block{b} = m_rectangular*m_rectangular';
@@ -42,11 +42,11 @@ methods
     end
 end
     
-methods
+methods %experiments
     
     function F = experiment_1(obj)
         % Approximate gradient vs mirror (not online)
-        [A_train, A_test, y_train, y_test, true_x] = obj.set_up_data();
+        [A_train, ~, y_train, ~, ~] = obj.set_up_data();
         hl = OHO_Lasso;
         hl.stepsize_policy = DiminishingStepsize;
         hl.stepsize_policy.eta_0 = 50;
@@ -64,7 +64,7 @@ methods
     
     function F = experiment_2(obj)
         % Approximate mirror vs Online mirror
-        [A_train, A_test, y_train, y_test, true_x] = obj.set_up_data();
+        [A_train, ~, y_train, ~, ~] = obj.set_up_data();
         hl = OHO_Lasso;
         hl.mirror_type = 'log';
         hl.stepsize_policy = DiminishingStepsize;
@@ -85,20 +85,25 @@ methods
     function F = experiment_11(obj)
         % Online mirror with diminishing stepsize
         % testing object-based stepsize policies
-        [A_train, A_test, y_train, y_test, true_x] = obj.set_up_data();
+        [A_train, ~, y_train, ~, ~] = obj.set_up_data();
         hl = OHO_Lasso;
         hl.mirror_type = 'log';
         hl.b_online = 1;
         hl.max_iter_outer= 1000;
-        hl.stepsize_policy.eta_0 = 500;
+        hl.stepsize_policy.eta_0 = 500; %default policy is Diminishing
+        
         v_lambda = hl.solve_approx_mirror(A_train, y_train);
+        
+        figure(1); clf
+        plot(v_lambda)
+        legend ('Mirror')
         F = 0;
     end
     
     function F = experiment_12(obj)
         % Online mirror with AdaGrad stepsize
         % testing object-based stepsize policies
-        [A_train, A_test, y_train, y_test, true_x] = obj.set_up_data();
+        [A_train, ~, y_train, ~, ~] = obj.set_up_data();
         hl = OHO_Lasso;
         hl.mirror_type = 'log';
         hl.b_online = 1;
@@ -106,14 +111,19 @@ methods
         hl.stepsize_policy = AdagradStepsize;
         hl.stepsize_policy.eta_0 = 0.1;
         hl.stepsize_policy.epsilon = 1e-5;
+       
         v_lambda = hl.solve_approx_mirror(A_train, y_train);
+        
+        figure(1); clf
+        plot(v_lambda)
+        legend ('Mirror, Adagrad')
         F = 0;
     end
     
     function F = experiment_13(obj)
         % Online mirror with RmsProp stepsize
         % testing object-based stepsize policies
-        [A_train, A_test, y_train, y_test, true_x] = obj.set_up_data();
+        [A_train, ~, y_train, ~, ~] = obj.set_up_data();
         hl = OHO_Lasso;
         hl.mirror_type = 'log';
         hl.b_online = 1;
@@ -122,99 +132,127 @@ methods
         hl.stepsize_policy.beta_2 = 0.9;
         hl.stepsize_policy.eta_0 = 0.01;
         hl.stepsize_policy.epsilon = 1e-6;
-        
+   
         v_lambda = hl.solve_approx_mirror(A_train, y_train);
+        
+        figure(1); clf
+        plot(v_lambda)
+        legend ('Mirror, RMSProp')
+        F = 0;
         % todo: maybe if we reduce the beta_2 param to 0.9 we get faster
         % convergence?
-        F = 0;
     end
 
     function F = experiment_14(obj)
         % Online mirror with LR-based stepsize
         % testing object-based stepsize policies
-        obj.n_train = 200;
-        [A_train, A_test, y_train, y_test, true_x] = obj.set_up_data();
+
+        [A_train, ~, y_train, ~, ~] = obj.set_up_data();
         hl = OHO_Lasso;
         hl.mirror_type = 'log';
         hl.b_online = 1;
         hl.max_iter_outer= 10000;
-        hl.stepsize_policy = LinearRegressionStepsize;
-        hl.stepsize_policy.version = 6;
-        hl.stepsize_policy.eta_0 = 10;%! 500;
-        hl.stepsize_policy.beta_2 = 1-1/obj.n_train;
-        hl.stepsize_policy.nu = 0.1;
-        hl.stepsize_policy.kappa = 1/obj.n_train;
-        hl.stepsize_policy.gamma = 0.;
-        hl.stepsize_policy.N = obj.n_train;
-        hl.stepsize_policy.law = @(x)x;
-        hl.stepsize_policy.inv_law = @(x)x;
+        
+        sp = LinearRegressionStepsize; %Stepsize Policy: Linear regression
+        sp.version = 6;
+        sp.eta_0 = 10;%! 500;
+        sp.beta_2 = 1-1/obj.n_train;
+        sp.nu = 0.1;
+        sp.kappa = 1/obj.n_train;
+        sp.gamma = 0.;
+        sp.N = obj.n_train;
+        sp.law = @(x)x;
+        sp.inv_law = @(x)x;
+        
+        hl.stepsize_policy = sp;
         v_lambda = hl.solve_approx_mirror(A_train, y_train);
+        
+        figure(1); clf
+        plot(v_lambda)
+        legend ('Mirror, LinearRegressionStepsize')
         F = 0;
     end
     
     function F = experiment_15(obj)
         % Online mirror with LR-based stepsize
         % testing object-based stepsize policies
-        obj.n_train = 200;
-        [A_train, A_test, y_train, y_test, true_x] = obj.set_up_data();
+
+        [A_train, ~, y_train, ~, ~] = obj.set_up_data();
         hl = OHO_Lasso;
         hl.mirror_type = 'log';
         hl.b_online = 1;
         hl.max_iter_outer= 10000;
-        hl.stepsize_policy = LinearRegressionStepsize;
-        hl.stepsize_policy.version = 6;
-        hl.stepsize_policy.eta_0 = 50;%! 500;
-        hl.stepsize_policy.beta_2 = 1-1/obj.n_train;
-        hl.stepsize_policy.nu = 0.01;
-        hl.stepsize_policy.kappa = 6;
+        
+        sp = LinearRegressionStepsize; %Stepsize Policy: Linear regression
+        sp.version = 6;
+        sp.eta_0 = 50;%! 500;
+        sp.beta_2 = 1-1/obj.n_train;
+        sp.nu = 0.01;
+        sp.kappa = 6;
+        
+        hl.stepsize_policy = sp;
         v_lambda = hl.solve_approx_mirror(A_train, y_train);
-        F = 0;
+        
+        figure(1); clf
+        plot(v_lambda)
+        legend ('Mirror, LinearRegressionStepsize')
+        F = 0;    
     end
 
     
     function F = experiment_21(obj)
-        % Online mirror with Adam-like adapted stepsize
-        [A_train, A_test, y_train, y_test, true_x] = obj.set_up_data();
+        % Online gradient with Adam-like adapted stepsize
+        
+        [A_train, ~, y_train, ~, ~] = obj.set_up_data();
         hl = OHO_Lasso;
         hl.mirror_type = 'grad';
         hl.b_online = 1;
         hl.max_iter_outer= 10000;
+        
         spo_adam = AdamStepsize;
         spo_adam.eta_0 = 0.03;
         spo_adam.beta_2= 0.99;
+        
         hl.stepsize_policy = spo_adam;       
-        lambda_adagrad= hl.solve_approx_mirror(A_train, y_train);
+        lambda_adam= hl.solve_approx_mirror(A_train, y_train);
         
         figure(1); clf
-        plot(lambda_adagrad);
+        plot(lambda_adam);
+        legend ('Grad, ADAM-like adapted stepsize')
+        F = 0;
     end
     
     function F = experiment_22(obj)
-        % Online mirror with U-FTML adapted stepsize
-        obj.n_train = 200;
-        [A_train, A_test, y_train, y_test, true_x] = obj.set_up_data();
+        % Online gradient with Unconstrained FTML (U-FTML) adapted stepsize
+
+        [A_train, ~, y_train, ~, ~] = obj.set_up_data();
         hl = OHO_Lasso;
         hl.mirror_type = 'grad';
         hl.b_online = 1;
         hl.max_iter_outer= 10000;
+        
         spo_uftml = UftmlStepsize;
         spo_uftml.eta_policy = DiminishingStepsize;
         spo_uftml.eta_policy.law = @(x)x; %1/k stepsize
         spo_uftml.eta_policy.eta_0 = 500;
         spo_uftml.beta_2= 1-1/obj.n_train;
         spo_uftml.beta_1 = 0.9;
+        
         hl.stepsize_policy = spo_uftml;       
-        lambda_adagrad= hl.solve_approx_mirror(A_train, y_train);
+        lambda_uftml= hl.solve_approx_mirror(A_train, y_train);
         
         figure(1); clf
-        plot(lambda_adagrad);
+        plot(lambda_uftml);
+        legend('Grad, U-FTML stepsize')
+        F = 0;
     end
     
     function F = experiment_23(obj)
-        % Online mirror with U-FTML adapted stepsize
+        % Online gradient with U-FTML adapted stepsize
         % Now with 10 times more samples!
-        obj.n_train = 2000; %! 2000
-        [A_train, A_test, y_train, y_test, true_x] = obj.set_up_data();
+        obj.n_train = 2000;
+        
+        [A_train, ~, y_train, ~, ~] = obj.set_up_data();
         hl = OHO_Lasso;
         hl.mirror_type = 'grad';
         hl.b_online = 1;
@@ -226,55 +264,71 @@ methods
         spo_uftml.beta_2 = 0.995;   %1-1/(obj.n_train);
         spo_uftml.beta_1 = 0.99;  %1-10/obj.n_train;
         hl.stepsize_policy = spo_uftml;       
-        lambda_adagrad= hl.solve_approx_mirror(A_train, y_train);
+        lambda_uftml= hl.solve_approx_mirror(A_train, y_train);
         
         figure(1); clf
-        plot(lambda_adagrad);
+        plot(lambda_uftml);
+        title '2000 training samples'
+        legend('Grad, U-FTML stepsize')
+        F = 0;
     end
     
     function F = experiment_24(obj)
         % Online mirror with Luismi's Q stepsize
-        obj.n_train = 1000; %! 2000
-        obj.seed = 4;
-        [A_train, A_test, y_train, y_test, true_x] = obj.set_up_data();
+        obj.n_train = 2000;
+        
+        %obj.seed = 4;     
+        [A_train, ~, y_train, ~, ~] = obj.set_up_data();
         hl = OHO_Lasso;
         hl.mirror_type = 'grad';
         hl.b_online = 1;
         hl.max_iter_outer= 20000;
+        
         spoq = QStepsize;
         %spo_uftml.eta_policy.law = @(x)x;%^(1/3); %1/k stepsize
         spoq.eta_0 = 100;
         spoq.nu = 5;
         spoq.beta_2 = 1-1/(obj.n_train);
         spoq.beta_1 = 1-1/(obj.n_train);
-        spoq.N = obj.n_train;
+        %spoq.N = obj.n_train; %this was a property of the previous version
+        % of QStepsize (now renamed as QStepsize_old)
+        
         hl.stepsize_policy = spoq;       
-        lambda_adagrad= hl.solve_approx_mirror(A_train, y_train);
+        lambda_QS= hl.solve_approx_mirror(A_train, y_train);
         
         figure(1); clf
-        plot(lambda_adagrad);
+        plot(lambda_QS);
+        title(sprintf('%d training samples', obj.n_train))
+        legend('Grad, Q-step')
+        F = 0;
     end
     
     function F = experiment_25(obj)
         % Online gradient descent with Luismi's Q stepsize
         obj.n_train = 1000; %! 2000
-        obj.seed = 4;
-        [A_train, A_test, y_train, y_test, true_x] = obj.set_up_data();
+        
+        %obj.seed = 4;
+        [A_train, ~, y_train, ~, ~] = obj.set_up_data();
         hl = OHO_Lasso;
         hl.mirror_type = 'grad';
         hl.b_online = 1;
         hl.max_iter_outer= 20000;
+        
         spoq = QStepsize;
         %spo_uftml.eta_policy.law = @(x)x;%^(1/3); %1/k stepsize
         spoq.eta_0 = 20;
         spoq.nu = 10;
         spoq.beta_2 = 1-1/(obj.n_train);
         spoq.beta_1 = 1-1/(obj.n_train);
+        
         hl.stepsize_policy = spoq;       
-        lambda_adagrad= hl.solve_approx_mirror(A_train, y_train);
+        lambda_QS= hl.solve_approx_mirror(A_train, y_train);
         
         figure(25); clf
-        plot(lambda_adagrad);
+        plot(lambda_QS);
+        title(sprintf('%d training samples', obj.n_train))
+        legend('Grad, Q-step')
+        F = 0;
     end
     
     function F = experiment_31(obj)
@@ -282,29 +336,33 @@ methods
         obj.n_train = 4000;
         obj.p = 100;
         obj.seed = 2;
-        [A_train, A_test, y_train, y_test, true_x] = obj.set_up_data();
+        [A_train, ~, y_train, ~, ~] = obj.set_up_data();
         hl = OHO_Lasso;
         hl.mirror_type = 'grad';
         hl.b_online = 1;
         hl.max_iter_outer= 20000;
-        memory_factor= 1;
+        
         spoq = QStepsize;
+        memory_factor= 1;
         spoq.eta_0 = 200;
         spoq.nu = 40;
         spoq.beta_2 = 1-1/(memory_factor*obj.n_train); % 10*
         spoq.beta_1 = 1-1/(memory_factor*obj.n_train); % 10*
+        
         hl.stepsize_policy = spoq;     
         hl.debug= 0;
         hl.normalized_lambda_0 = 1/obj.n_train;
+        %By default the OHO_Lasso goes with memory
         [lambda_memory, count_memory]    ...
             = hl.solve_approx_mirror(A_train, y_train);
-        hl.b_memory = 0;
+        
         spoq2 = QStepsize;
         spoq2.eta_0 = 200;
         spoq2.nu = 40;
         spoq2.beta_2 = 1-1/(memory_factor*obj.n_train); % 10*
         spoq2.beta_1 = 1-1/(memory_factor*obj.n_train); % 10*
         hl.stepsize_policy = spoq2;
+        hl.b_memory = 0; %Now we experiment with the Memoryless option
         [lambda_memoryless, count_memoryless] ...
             = hl.solve_approx_mirror(A_train, y_train);             
         
@@ -312,10 +370,12 @@ methods
         plot([cumsum(count_memoryless) cumsum(count_memory)], ...
             [lambda_memoryless lambda_memory]);
         legend('Memoryless','With Memory')
+        title(sprintf('%d training samples', obj.n_train))
+        F = 0;
     end
     
-    function F = experiment_32(obj)
-        % Memoryless, comparison between exact (let ista converge) and
+    function F = experiment_32(obj) %TODO: SHORTEN EXPERIMENT CODE
+        % Memoryless, comparison between exact (let ISTA converge) and
         % inexact (few iterations of ista for each iteration of lambda)
         
         obj.n_train = 4000;
