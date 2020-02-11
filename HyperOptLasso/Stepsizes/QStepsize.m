@@ -50,14 +50,14 @@ classdef QStepsize < StepsizePolicy
                 % opposite to that of the average gradient
             end
             
-            eta_ftml = (1-obj.beta_1)./(1-obj.beta_1.^obj.k) ...
+            v_eta_ftml = (1-obj.beta_1)./(1-obj.beta_1.^obj.k) ...
                 .* obj.eta_0./...
                 (sqrt(obj.v_v/(1-obj.beta_2^obj.k))+obj.epsilon); 
             % the stepsize that FTML would produce is used as an upper cap 
             % to the stepsize of this variance control algorithm
             increase_factor = 1./(1-obj.nu.*...
-                (obj.v_q-0.5+obj.dqg).*(obj.v_q-0.5-obj.dqg));
-            obj.v_eta = min(eta_ftml, obj.v_eta.*increase_factor);
+                (obj.v_q-0.5+obj.dqg).*(obj.v_q-0.5-obj.dqg));          
+            obj.v_eta = min(v_eta_ftml, obj.v_eta.*increase_factor);
             % TODO: the increase factor property will probably be common
             % to all variance control stepsize policies
             v_eta_out = obj.v_eta;
