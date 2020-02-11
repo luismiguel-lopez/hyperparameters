@@ -134,7 +134,7 @@ methods
                     subplot(413);
                     plot(v_kappas); title '\kappa'
                     subplot(414)
-                    plot(v_oos_error); title 'out-of-sample error'
+                    plot(v_oos_error); title 'cross-validation error'
                     drawnow
 %                   if isa(my_sp, 'LinearRegressionStepsize')
 %                       my_sp.plot_state();
