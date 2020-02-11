@@ -5,7 +5,10 @@ classdef OHOExperiments
         p       = 100;     % Dimensionality of dataset
         seed    = 3;       % Random seed
         sigma   = 0.3;     % Variance of the noise
-        b_colinear = 0; %introduce colinear variables (see set_up_data method)
+        sparsity = 0.8;    % proportion of entries of true_x that are > 0
+        
+        b_colinear = 0;    %introduce colinear variables when creating 
+        % synthetic data (see set_up_data method)
     end
       
 methods % Constructor and synthetic-data creating procedure
@@ -13,6 +16,7 @@ methods % Constructor and synthetic-data creating procedure
     function obj = OHOExperiments() %The constructor sets the path
         addpath('Stepsizes/')
         addpath('utilities/')
+        addpath('competitors/')
     end
     
     function [A_train, A_test, y_train, y_test, true_x] = ...
@@ -34,7 +38,7 @@ methods % Constructor and synthetic-data creating procedure
         end
         A_train = randn(obj.n_train, obj.p)*D; % sensing matrix
         A_test = randn(obj.n_test, obj.p)*D;
-        true_x = double(randn(obj.p, 1) > 1); % sparse coefficients
+        true_x = double(rand(obj.p, 1) < obj.sparsity); % sparse coefficients
         epsilon = randn(obj.n_train, 1) * obj.sigma; % noise
         epsilon_test = randn(obj.n_test, 1) * obj.sigma;
         y_train = A_train * true_x + epsilon;
@@ -198,7 +202,6 @@ methods %experiments
         legend ('Mirror, LinearRegressionStepsize')
         F = 0;    
     end
-
     
     function F = experiment_21(obj)
         % Online gradient with Adam-like adapted stepsize
@@ -935,7 +938,7 @@ methods %experiments
         hl.mirror_type = 'grad';
         hl.b_online = 1;
         hl.max_iter_outer= 20000;
-        memory_factor= 1;
+        memory_factor = 1;
         spoq = QStepsize;
         spoq.eta_0 = 200;
         spoq.nu = 20;
