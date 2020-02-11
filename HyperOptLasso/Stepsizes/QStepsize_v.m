@@ -63,7 +63,7 @@ classdef QStepsize_v < StepsizePolicy
                 (sqrt(obj.v_v/(1-obj.beta_2^obj.k))+obj.epsilon); 
             % the stepsize that FTML would produce is used as an upper cap 
             % to the stepsize of this variance control algorithm
-            increase_factor = 1./min(1-obj.nu.*...
+            increase_factor = 1./max(1-obj.nu.*...
                 (obj.v_q-0.5+obj.dqg).*(obj.v_q-0.5-obj.dqg)); %!            
             % Added min to this last line to have a scalar increase factor
             obj.eta_now = min(obj.eta_0, obj.eta_now*increase_factor);
