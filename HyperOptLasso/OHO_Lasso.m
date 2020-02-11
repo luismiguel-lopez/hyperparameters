@@ -2,9 +2,9 @@ classdef OHO_Lasso
     % Algorithm for Online Hyperparameter Optimization for the Lasso
     % regularization parameter
 properties
-    max_iter_outer = 200; % maximum of outer iterations (over the hyperparam)
-    max_iter_inner = 1000; %maximum of inner iterations (over model weights)
-    min_iter_inner = 1;    %minimum of inner iterations (over model weights)
+    max_iter_outer = 200;  % maximum of outer iterations (over the hyperparam)
+    max_iter_inner = 1000; % maximum of inner iterations (over model weights)
+    min_iter_inner = 1;    % minimum of inner iterations (over model weights)
     tol = 1e-3;   % tolerance for checking convergence of (inner alg) ISTA
     tol_g = 1e-5; % tolerance for checking convergence of outer algorithm
     mirror_type = 'grad' %type of mirror descent (grad or log)
@@ -12,6 +12,7 @@ properties
     stepsize_policy StepsizePolicy = DiminishingStepsize;
     b_memory = 1; % flag for running with memory (saving the weights for each cross validation fold)
     normalized_lambda_0 = 1/100; % parameter for initializing the lambda par
+    c_alpha = 1; % proportionality constant of stepsize (w.r.t. trace(Phi))
     
     approx_type = 'soft'; % type of connvex approximation (hard or soft)
         
@@ -27,10 +28,11 @@ methods
         P = size(m_X, 2); % m_X is NxP
         m_Phi = m_X'*m_X;
         v_r   = m_X'*v_y;
-        alpha = 10/trace(m_Phi);
+        alpha = obj.c_alpha/trace(m_Phi);
         lambda_max = max(abs(v_r));
-        v_lambda = zeros(obj.max_iter_outer, 1);
+        v_lambda = zeros(1, obj.max_iter_outer);
         v_lambda(1) = lambda_max.*obj.normalized_lambda_0;
+        
         v_w_0 = obj.ista(zeros(P,1), m_Phi, v_r, alpha, v_lambda(1));
         %v_w_0 = zeros(P,1); %used this line to look in the oos-error
         if obj.b_memory
@@ -38,12 +40,12 @@ methods
         else
             v_w_j = sparse(v_w_0);
         end
-        v_eta = zeros(obj.max_iter_outer, 1);
+        v_eta = zeros(1, obj.max_iter_outer);
         my_sp = obj.stepsize_policy;
         v_eta(1)= my_sp.eta_0;
         v_it_count = zeros(obj.max_iter_outer, 1);
-        v_kappas= zeros(obj.max_iter_outer, 1); %only for debug plots
-        v_oos_error = zeros(obj.max_iter_outer,1);
+        v_kappas= zeros(1, obj.max_iter_outer); %only for debug plots
+        v_crossval_error = zeros(obj.max_iter_outer,1);
         
         v_j = mod(0:obj.max_iter_outer-1, N)+1;
         my_sp.k = 1;
@@ -51,7 +53,7 @@ methods
         combo = 0;
         for k = 2:obj.max_iter_outer
             g = 0;
-            v_oos_error(k) = 0;
+            v_crossval_error(k) = 0;
             v_it_count(k) = 0;
             if obj.b_online
                 v_indices_k = v_j(k);
@@ -71,30 +73,30 @@ methods
                          m_Phi_j, v_r_j, alpha, v_lambda(k-1));
                     v_w_j = sparse(v_w_j);
                 end
+                v_z_j = max(-1, min(1, 1/(alpha*v_lambda(k-1))*v_w_f));
+                v_zHard_j = sign(round(1/(2*alpha*v_lambda(k-1))*v_w_f));
+                my_alpha = alpha; % version that actually works
+                %my_alpha = -alpha; % this does not work
+                % with the derivations as of feb 1, 2020, the use of -alpha
+                % could be justified but I don't have the theoretical 
+                % explanation for the algorithm working with alpha and not
+                % with -alpha
                 switch obj.approx_type
                     case 'soft'
-                        v_s_j = max(-1, min(1, ...
-                            1/(alpha*v_lambda(k-1))*v_w_f));
+                        g = g + my_alpha* v_x_j'*v_z_j*(v_y(j)- v_x_j'*(v_w_j- ...
+                            my_alpha*(m_Phi_j*v_w_j - v_r_j + v_lambda(k-1)*v_z_j)));
                     case 'hard'
-                        v_s_j = sign(round(1/(2*alpha*v_lambda(k-1))*v_w_f));
+                        g = g + my_alpha* v_x_j'*v_zHard_j*(v_y(j)- v_x_j'*(v_w_j- ...
+                            my_alpha*(m_Phi_j*v_w_j - v_r_j + v_lambda(k-1)*v_z_j)));
                     otherwise, error 'misspecified approximation type'
                 end
-                my_alpha = alpha; %first version of the alg
-                %my_alpha = -alpha;  % interestingly, the derivation as of
-                % could feb 1, 2020 could be rewritten with a + before
-                % alpha, and I don't have the theoretical explanation for
-                % the algorithm working with a - and not with a +
                 
-                g = g + my_alpha* v_x_j'*v_s_j*(v_y(j)- v_x_j'*(v_w_j- ...
-                    my_alpha*(m_Phi_j*v_w_j - v_r_j + v_lambda(k-1)*v_s_j)));
                 v_it_count(k) = v_it_count(k) + niter_out;
-                v_oos_error(k) = v_oos_error(k) + sum((m_X*v_w_j-v_y).^2);
+                aiej = 1:N; aiej(j) = []; %all indices except j
+                v_crossval_error(k) = v_crossval_error(k) + sum(...
+                    (m_X(aiej,:)*v_w_j-v_y(aiej)).^2);
             end
-%             if obj.b_memory % to be removed
-%                 v_oos_error(k) = sum((sum(m_W.*m_X')-v_y').^2);
-%             else
-%                 v_oos_error(k) = sum((m_X*v_w_j-v_y).^2);
-%             end
+
             v_eta(k) = my_sp.update_stepsize(g, ...
                 v_lambda(k-1));
             v_lambda(k) = obj.mirror_step(v_lambda(k-1), g, v_eta(k));
@@ -121,7 +123,7 @@ methods
             if obj.debug
                 try
                     v_sigma2 = my_sp.v_v...
-                        - my_sp.v_u.^2; assert (v_sigma2>0)                  
+                        - my_sp.v_u.^2; assert( all(v_sigma2>0) )                  
                     v_kappas(k) = qfunc(my_sp.v_u ...
                         ./sqrt(v_sigma2));
                 end                
@@ -134,12 +136,8 @@ methods
                     subplot(413);
                     plot(v_kappas); title '\kappa'
                     subplot(414)
-                    plot(v_oos_error); title 'cross-validation error'
+                    plot(v_crossval_error); title 'cross-validation error'
                     drawnow
-%                   if isa(my_sp, 'LinearRegressionStepsize')
-%                       my_sp.plot_state();
-%                       ylim([0 lambda_max/50]);
-%                   end
                 end
             end
         end
@@ -187,19 +185,23 @@ methods
     end
     
     function x_out = mirror_step(obj, x_in, g, beta)
+        assert(iscolumn(x_in), 'x must be a column vector')
+        assert(iscolumn(g),    'g must be a column vector')
+        assert(iscolumn(beta), 'step size must be a column vector')
         switch obj.mirror_type
             case 'grad'
-                x_out = max(0, x_in - beta*g);
+                x_out = max(0, x_in - beta.*g);
             case 'log'
                 if g*beta < -0.9
                     warning 'negative d times beta too large'
                     warning 'rate of increase capped at 10'
                     x_out = 10*x_in;
                 else
-                    x_out = x_in/(1+beta*g);
+                    x_out = x_in/(1+beta.*g);
                 end
                 % TODO: maybe also interesting to check whether x exceeds
                 % a maximum value (in this case, lambda_max)
+            otherwise, error 'misspecified mode'
         end
     end
 end

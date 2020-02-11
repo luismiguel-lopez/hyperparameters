@@ -1,17 +1,22 @@
 classdef OHO_ElasticNet
+    % Algorithm for Online Hyperparameter Optimization for the Elastic-Net
+    % regularization parameters (lambda and rho)
 properties
-    max_iter_outer = 200;
-    max_iter_inner = 1000;
-    min_iter_inner = 1;
-    tol = 1e-3; % tolerance for checking convergence of ISTA
-    tol_g = 1e-5;
-    mirror_type = 'grad'
-    b_online = 0;
+    max_iter_outer = 200;  % maximum of outer iterations (over the hyperparam)
+    max_iter_inner = 1000; % maximum of inner iterations (over model weights)
+    min_iter_inner = 1;    % minimum of inner iterations (over model weights)
+    tol = 1e-3;   % tolerance for checking convergence of (inner alg) ISTA
+    tol_g = 1e-5; % tolerance for checking convergence of outer algorithm
+    mirror_type = 'grad' %type of mirror descent (grad or log)
+    b_online = 0; % flag for running online, 0 by default
     stepsize_policy StepsizePolicy = DiminishingStepsize;
-    b_memory = 1;
-    normalized_lambda_0 = 1/100;
+    b_memory = 1; % flag for running with memory (saving the weights for each cross validation fold)
+    normalized_lambda_0 = 1/100; % parameter for initializing the lambda par
+    c_alpha = 1; % proportionality constant of stepsize (w.r.t. trace(Phi))
+    
+    approx_type = 'soft'; % type of connvex approximation (hard or soft)
         
-    debug = 1;
+    debug = 1; %flag for debugging mode
     
 end
 
@@ -23,7 +28,7 @@ methods
         P = size(m_X, 2); % m_X is NxP
         m_Phi = m_X'*m_X;
         v_r   = m_X'*v_y;
-        alpha = 10/trace(m_Phi);
+        alpha = obj.c_alpha/trace(m_Phi);
         lambda_max = max(abs(v_r));
         m_lambda = zeros(2, obj.max_iter_outer); % EN: now 2 hyperparams
         m_lambda(1, 1) = lambda_max.*obj.normalized_lambda_0;
@@ -40,7 +45,7 @@ methods
         my_sp = obj.stepsize_policy;
         m_eta(:, 1)= my_sp.eta_0;
         v_it_count = zeros(obj.max_iter_outer, 1);
-        v_kappas= zeros(obj.max_iter_outer, 1); %only for debug plots
+        m_kappas= zeros(2, obj.max_iter_outer); %only for debug plots
         v_crossval_error = zeros(obj.max_iter_outer,1);
         
         v_j = mod(0:obj.max_iter_outer-1, N)+1;
@@ -69,26 +74,24 @@ methods
                          m_Phi_j_plus_rhoI, v_r_j, alpha, m_lambda(1, k-1));
                     v_w_j = sparse(v_w_j);
                 end
-                v_s_j = max(-1, min(1, ...
-                    1/(alpha*m_lambda(1, k-1))*v_w_f));
-                b_elasticNet = 1;
-                if b_elasticNet
-                    g = g + alpha*[v_s_j';v_w_j']*v_x_j*(v_y(j)- v_x_j'*(v_w_j- ...
-                        alpha*(m_Phi_j_plus_rhoI*v_w_j - v_r_j + m_lambda(1, k-1)*v_s_j)));
-                else %old code
-                    g = g + alpha* v_x_j'*v_s_j*(v_y(j)- v_x_j'*(v_w_j- ...
-                        alpha*(m_Phi_j_plus_rhoI*v_w_j - v_r_j + m_lambda(1, k-1)*v_s_j)));
+                v_z_j = max(-1, min(1, 1/(alpha*m_lambda(1, k-1))*v_w_f));
+                v_zHard_j = sign(round(1/(2*alpha*v_lambda(k-1))*v_w_f));
+                switch obj.approx_type
+                    case 'soft'
+                        g = g + alpha*[v_z_j';v_w_j']*v_x_j*(v_y(j)- v_x_j'*(v_w_j- ...
+                            alpha*(m_Phi_j_plus_rhoI*v_w_j - v_r_j + m_lambda(1, k-1)*v_z_j)));
+                     case 'hard' % TODO: try this option out                    
+                        g = g + alpha.*[v_zHard_j';v_w_j']*v_x_j.*(v_y(j)- v_x_j'*(v_w_j- ...
+                             alpha.*(m_Phi_j_plus_rhoI*v_w_j - v_r_j + m_lambda(1, k-1)*v_z_j)));
+                    otherwise, error 'misspecified approximation type'
                 end
+                
                 v_it_count(k) = v_it_count(k) + niter_out;
                 aiej = 1:N; aiej(j) = []; %all indices except j
                 v_crossval_error(k) = v_crossval_error(k) + sum(...
                     (m_X(aiej,:)*v_w_j-v_y(aiej)).^2);
             end
-%             if obj.b_memory % to be removed
-%                 v_crossval_error(k) = sum((sum(m_W.*m_X')-v_y').^2);
-%             else
-%                 v_crossval_error(k) = sum((m_X*v_w_j-v_y).^2);
-%             end
+
             m_eta(:, k) = my_sp.update_stepsize(g, ...
                 m_lambda(:, k-1));
             m_lambda(:, k) = obj.mirror_step(m_lambda(:, k-1), g, m_eta(:, k));
@@ -116,8 +119,8 @@ methods
             if obj.debug
                 try
                     v_sigma2 = my_sp.v_v...
-                        - my_sp.v_u.^2; assert (v_sigma2>0)                  
-                    v_kappas(k) = qfunc(my_sp.v_u ...
+                        - my_sp.v_u.^2; assert( all(v_sigma2>0) )              
+                    m_kappas(:, k) = qfunc(my_sp.v_u ...
                         ./sqrt(v_sigma2));
                 end                
                 if obj.debug && mod(k, 100) == 0
@@ -128,14 +131,10 @@ methods
                     subplot(412);
                     plot(m_eta');    title '\eta'
                     subplot(413);
-                    plot(v_kappas); title '\kappa'
+                    plot(m_kappas'); title '\kappa'
                     subplot(414)
                     plot(v_crossval_error); title 'cross-validation error'
                     drawnow
-%                   if isa(my_sp, 'LinearRegressionStepsize')
-%                       my_sp.plot_state();
-%                       ylim([0 lambda_max/50]);
-%                   end
                 end
             end
         end
@@ -199,7 +198,7 @@ methods
                 end
                 % TODO: maybe also interesting to check whether x exceeds
                 % a maximum value (in this case, lambda_max)
-            otherwise error 'misspecified mode'
+            otherwise, error 'misspecified mode'
         end
     end
 end
