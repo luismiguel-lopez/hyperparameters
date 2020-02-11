@@ -25,7 +25,7 @@ methods % Constructor and synthetic-data creating procedure
         
         if obj.b_colinear % create correlated variables           
             block_size = 10;
-            block_rank = 8; assert(block_rank<block_size);
+            block_rank = 5; assert(block_rank<block_size);
             n_blocks = obj.p/block_size; assert(n_blocks==uint8(n_blocks))
             t_block = cell(n_blocks, 1);
             for b = 1:n_blocks
@@ -385,6 +385,7 @@ methods %experiments
         obj.p = 400;
         obj.seed = 3;
         [A_train, A_test, y_train, y_test, true_x] = obj.set_up_data();
+        
         hl = OHO_Lasso;
         hl.mirror_type = 'grad';
         hl.b_online = 1;
@@ -1114,14 +1115,15 @@ methods %experiments
         
     function F = experiment_50(obj)
         % Elastic Net ( rest of params were copied from Experiment_36)
-        % with memory
+        % with memory (TODO: check taht OHO_Elastic net actually uses
+        % memory)
         
         obj.n_train = 200;
         obj.p = 100;
         obj.b_colinear = 1;
         obj.sigma = 10;
         obj.seed = 9;
-        [A_train, A_test, y_train, y_test, true_x] = obj.set_up_data();
+        [A_train, ~, y_train, ~, ~] = obj.set_up_data();
         hen = OHO_ElasticNet;
         hen.mirror_type = 'grad'; %! it was log before
         hen.b_online = 1;
@@ -1152,6 +1154,125 @@ methods %experiments
             = hen.solve_approx_mirror(A_train, y_train);
 
         figure(50); clf
+        plot(cumsum(count_inexact), lambda_inexact);  
+        title 'Elastic net'
+        xlabel '# ISTA iterations'
+        ylabel '\lambda'
+        legend('\lambda','\rho')
+        drawnow
+        
+        %%
+        % Evaluate test error
+
+%         final_lambda_exact = lambda_exact(find(count_exact>0, 1, 'last'));
+        final_niter = find(count_inexact>0, 1, 'last');
+        final_lambda = lambda_inexact(1, final_niter);
+        final_rho    = mean(lambda_inexact(2, ceil(final_niter/2):final_niter));
+        v_testLambdas = final_lambda*logspace(-1, 0.5);
+        v_looLambdas = final_lambda*linspace(0.3, 3, 15);
+        v_aloLambdas = final_lambda*linspace(0.3, 3, 200);
+        v_testErrors = zeros(size(v_testLambdas));
+        v_valErrors  = v_testErrors;
+        v_looErrors  = zeros(size(v_looLambdas));
+        
+        compute_loo = 0;
+        compute_alo = 0;
+        if compute_loo
+            disp 'Computing test errors'
+            for k = 1:length(v_testLambdas)
+                v_testErrors(k) = obj.estimate_outOfSample_error(A_train, ...
+                    y_train, A_test, y_test, v_testLambdas(k), v_w_final, final_rho);
+                v_valErrors(k) = obj.estimate_outOfSample_error(A_test, ...
+                    y_test, A_train, y_train, v_testLambdas(k), v_w_final, final_rho);
+            end
+            test_error = mean((y_test-A_test*v_w_final).^2)./mean(y_test.^2);
+
+            val_error  = obj.estimate_outOfSample_error(A_test, ...
+                y_test, A_train, y_train, final_lambda, v_w_final, final_rho);
+
+            disp 'Computing loo errors'
+            for kl = 1:length(v_looLambdas)
+                v_looErrors(kl) = obj.exact_loo(...
+                    A_train, y_train, v_looLambdas(kl), v_w_final, final_rho);
+            end  
+            ind_final_lambda = find(v_looLambdas==final_lambda, 1,'first');
+            if isempty(ind_final_lambda)
+                loo_error = obj.exact_loo(A_train, y_train, ...
+                    final_lambda, v_w_final, final_rho);
+            else
+                loo_error = v_looErrors(ind_final_lambda);
+            end
+            
+            figure(135); clf
+            loglog(v_testLambdas, v_testErrors);hold on
+            loglog(v_testLambdas, v_valErrors, 'r')
+            loglog(v_looLambdas, v_looErrors,'g')
+        
+            plot(final_lambda, test_error, 'xb')
+            plot(final_lambda, val_error, 'xr')
+            plot(final_lambda, loo_error, 'xg')
+            
+            my_legend = {'Out-of-sample test error', ...
+            'Out-of-sample validation error', 'Leave-one-out error',...
+            'Inexact, memoryless', '', '' };
+        
+            xlabel \lambda
+            ylabel MSE
+            if compute_alo
+                disp 'Computing approximate loo errors'
+                v_aloErrors = obj.estimate_alo_error(A_train, y_train, ...
+                    [v_aloLambdas' ones(size(v_aloLambdas))'*final_rho], ...
+                    v_w_final);
+                loglog(v_aloLambdas, v_aloErrors, 'm')
+                my_legend = {my_legend(:), 'Approximate Loo (Wang, 2018)'};
+            end
+            legend(my_legend)
+        end
+        
+        %%
+        save SavedResults_50
+    end
+    
+    function F = experiment_51(obj)
+        % Elastic Net ( copied from exp 50 and now we use QStepsize)
+        % memoryless
+        % inexact
+        obj.n_train = 200;
+        obj.p = 100;
+        obj.b_colinear = 1;
+        obj.sigma = 10;
+        obj.seed = 9;
+        [A_train, A_test, y_train, y_test, true_x] = obj.set_up_data();
+        hen = OHO_ElasticNet;
+        hen.mirror_type = 'grad'; %! it was log before
+        hen.b_online = 1;
+        hen.b_memory = 0;
+        hen.tol = 1e0;
+        hen.max_iter_outer= 5000; %!
+        
+        memory_factor= 10;
+        spoq = QStepsize_v;
+        spoq.eta_0 = 2000;
+        spoq.beta_2 = 1-1/(memory_factor*obj.n_train);
+        spoq.beta_1 = 1-1/(memory_factor*obj.n_train);
+        spoq.nu = 100;
+        spoq.dqg = 0.01;
+        
+        hen.stepsize_policy = spoq;     
+        hen.debug= 1;
+        hen.normalized_lambda_0 = 1/obj.n_train; %! it was 1/n_train
+%         hl.normalized_lambda_0 = 1/sqrt(obj.n_train);
+%         hl.tol = 1e-4;
+%         hl.b_memory = 1;
+%         [lambda_exact, count_exact, v_w_exact] ...
+%             = hl.solve_approx_mirror(A_train, y_train);
+        
+        hen.tol = 1e0;
+        hen.b_memory = 0;
+        [lambda_inexact, count_inexact, v_w_final] ...
+            = hen.solve_approx_mirror(A_train, y_train);
+
+        figure(51); clf
         plot(cumsum(count_inexact), lambda_inexact);  
         title 'Elastic net'
         xlabel '# ISTA iterations'
@@ -1228,48 +1349,9 @@ methods %experiments
         end
         
         %%
-        save SavedResults_50
-    end
-    
-
-        disp 'Computing loo errors'
-        for kl = 1:length(v_looLambdas)
-            v_looErrors(kl) = obj.exact_loo(...
-                A_train, y_train, v_looLambdas(kl), v_w_final, final_rho);
-        end  
-        ind_final_lambda = find(v_looLambdas==final_lambda, 1,'first');
-        if isempty(ind_final_lambda)
-            loo_error = obj.exact_loo(A_train, y_train, ...
-                final_lambda, v_w_final, final_rho);
-        else
-            loo_error = v_looErrors(ind_final_lambda);
-        end
-        
-        disp 'Computing approximate loo errors'
-        v_aloErrors = obj.estimate_alo_error(A_train, y_train, ...
-            [v_aloLambdas' ones(size(v_aloLambdas))'*final_rho], ...
-            v_w_final);
-        %% 
-        figure(135); clf
-        loglog(v_testLambdas, v_testErrors);hold on
-        loglog(v_testLambdas, v_valErrors, 'r')
-        loglog(v_looLambdas, v_looErrors,'g')
-        loglog(v_aloLambdas, v_aloErrors, 'm')
-        plot(final_lambda, test_error, 'xb')
-        plot(final_lambda, val_error, 'xr')
-        plot(final_lambda, loo_error, 'xg')
-         
-        legend ('Out-of-sample test error', ...
-            'Out-of-sample validation error', 'Leave-one-out error', ...
-            'Approximate Loo (Wang, 2018)', ...
-            'Inexact, memoryless', '', '')
-        xlabel \lambda
-        ylabel MSE
-        
-        %%
         save SavedResults_51
     end
-    
+
     function F = experiment_52(obj)
         % Comparing Elastic Net and Lasso
         % optimal params for Elastic net should work better than
@@ -1356,100 +1438,101 @@ methods %experiments
     
 
 end
-    methods (Static)
+methods (Static)
         
-        function alo_nmse = estimate_alo_error(m_X_train, v_y_train, ...
-                m_hyperparams, v_w_0)
-            N = length(v_y_train); assert(size(m_X_train, 1)==N);
-            P = size(m_X_train, 2);
-            m_Phi = m_X_train'*m_X_train;
-            v_r = m_X_train'*v_y_train;
-            my_alpha = 10/trace(m_Phi);
-            hl = OHO_Lasso;
-            hl.tol = 1e-3;
-            if size(m_hyperparams, 2) == 1
-                % LASSO
-                v_lambdas = m_hyperparams(:,1);
-                v_rhos    = zeros(size(v_lambdas));
-                K = size(m_hyperparams, 1);
-
-            elseif size(m_hyperparams, 2) == 2
-                % Elastic net
-                v_lambdas = m_hyperparams(:,1);
-                v_rhos    = m_hyperparams(:,2);
-                K = size(m_hyperparams, 1);
-            elseif size(m_hyperparams, 1) ==1
-                v_lambdas = m_hyperparams';
-                v_rhos    = zeros(size(v_lambdas));
-                K = size(m_hyperparams, 2);
-            end
-            m_W = zeros(P,K);
-            disp('Training for each value of lambda')
-            ltc = LoopTimeControl(K);
-            for k = 1:K
-                m_W(:,k) = hl.ista(v_w_0, m_Phi+v_rhos(k)*eye(P), v_r, ...
-                    my_alpha, v_lambdas(k));
-                ltc.go(k);
-            end
-            disp 'Computing approximate LOO for trained coefs'
-            alo_nmse = alo_lasso_mex(m_X_train, v_y_train, m_W, 1e-5)...
-                ./mean(v_y_train.^2);
-        end
-        
-        function oos_error = estimate_outOfSample_error(m_X_train, v_y_train,...
-                m_X_test, v_y_test, lambda, v_w_0, rho)
-            N = length(v_y_train); assert(size(m_X_train, 1)==N);
-            P = size(m_X_train, 2);
-            if exist('rho', 'var')
-                m_Phi = m_X_train'*m_X_train + rho*eye(P);
-            else
-                m_Phi = m_X_train'*m_X_train;
-            end
-            v_r = m_X_train'*v_y_train;
-            my_alpha = 10/trace(m_Phi);
-            hl = OHO_Lasso;
-            hl.tol = 1e-3;
-            v_w_test = hl.ista(v_w_0, m_Phi, v_r, my_alpha, lambda);
-            oos_error = mean((v_y_test - m_X_test*v_w_test).^2)./mean(v_y_test.^2);
-        end
-%         function val_error = compute_validation_error(...
-%                 m_X_trained, v_y_trained, m_X_val, v_y_val, lambda, v_w_0)
-%             N = length(v_y_val); assert(size(m_X_val, 1)==N);
-%             m_Phi = m_X_val'*m_X_val;
-%             v_r = m_X_val'*v_y_val;
-%             my_alpha = 10/trace(m_Phi);
-%             hl = OHO_Lasso;
-%             hl.tol = 1e-3;
-%             v_w_val = hl.ista(v_w_0, m_Phi, v_r, my_alpha, lambda);
-%             val_error = mean((v_y_trained - m_X_trained*v_w_val).^2);            
-%         end
-        
-        function loo_error = exact_loo(m_X, v_y, lambda, v_w_0, rho)
+    function alo_nmse = estimate_alo_error(m_X_train, v_y_train, ...
+            m_hyperparams, v_w_0)
+        N = length(v_y_train); assert(size(m_X_train, 1)==N);
+        P = size(m_X_train, 2);
+        m_Phi = m_X_train'*m_X_train;
+        v_r = m_X_train'*v_y_train;
+        my_alpha = 10/trace(m_Phi);
+        hl = OHO_Lasso;
+        hl.tol = 1e-3;
+        if size(m_hyperparams, 2) == 1
+            % LASSO
+            v_lambdas = m_hyperparams(:,1);
+            v_rhos    = zeros(size(v_lambdas));
+            K = size(m_hyperparams, 1);
             
-            N = length(v_y); assert(size(m_X, 1)==N);
-            P = size(m_X, 2);
-            
-            if exist('rho', 'var')
-                m_Phi = m_X'*m_X + rho*eye(P);
-            else 
-                m_Phi = m_X'*m_X ;
-            end
-            v_r = m_X'*v_y;
-            my_alpha = 10/trace(m_Phi);
-            hl = OHO_Lasso;
-            hl.tol = 1e-4;
-            v_looErrors = zeros(N,1);
-            ltc = LoopTimeControl(N);
-            for j =1:N
-                v_x_j = m_X(j,:)';
-                m_Phi_j = m_Phi - v_x_j * v_x_j';
-                v_r_j   = v_r   - v_y(j)* v_x_j;
-                v_w_j = hl.ista(v_w_0, m_Phi_j, v_r_j, my_alpha, lambda);
-                v_looErrors(j) = v_y(j)-m_X(j,:)*v_w_j;
-                ltc.go(j);
-            end
-            loo_error = mean(v_looErrors.^2)./mean(v_y.^2);
+        elseif size(m_hyperparams, 2) == 2
+            % Elastic net
+            v_lambdas = m_hyperparams(:,1);
+            v_rhos    = m_hyperparams(:,2);
+            K = size(m_hyperparams, 1);
+        elseif size(m_hyperparams, 1) ==1
+            v_lambdas = m_hyperparams';
+            v_rhos    = zeros(size(v_lambdas));
+            K = size(m_hyperparams, 2);
         end
+        m_W = zeros(P,K);
+        disp('Training for each value of lambda')
+        ltc = LoopTimeControl(K);
+        for k = 1:K
+            m_W(:,k) = hl.ista(v_w_0, m_Phi+v_rhos(k)*eye(P), v_r, ...
+                my_alpha, v_lambdas(k));
+            ltc.go(k);
+        end
+        disp 'Computing approximate LOO for trained coefs'
+        alo_nmse = alo_lasso_mex(m_X_train, v_y_train, m_W, 1e-5)...
+            ./mean(v_y_train.^2);
     end
+    
+    function oos_error = estimate_outOfSample_error(m_X_train, v_y_train,...
+            m_X_test, v_y_test, lambda, v_w_0, rho)
+        N = length(v_y_train); assert(size(m_X_train, 1)==N);
+        P = size(m_X_train, 2);
+        if exist('rho', 'var')
+            m_Phi = m_X_train'*m_X_train + rho*eye(P);
+        else
+            m_Phi = m_X_train'*m_X_train;
+        end
+        v_r = m_X_train'*v_y_train;
+        my_alpha = 10/trace(m_Phi);
+        hl = OHO_Lasso;
+        hl.tol = 1e-3;
+        v_w_test = hl.ista(v_w_0, m_Phi, v_r, my_alpha, lambda);
+        oos_error = mean((v_y_test - m_X_test*v_w_test).^2)./mean(v_y_test.^2);
+    end
+    
+%     function val_error = compute_validation_error(...
+%             m_X_trained, v_y_trained, m_X_val, v_y_val, lambda, v_w_0)
+%         N = length(v_y_val); assert(size(m_X_val, 1)==N);
+%         m_Phi = m_X_val'*m_X_val;
+%         v_r = m_X_val'*v_y_val;
+%         my_alpha = 10/trace(m_Phi);
+%         hl = OHO_Lasso;
+%         hl.tol = 1e-3;
+%         v_w_val = hl.ista(v_w_0, m_Phi, v_r, my_alpha, lambda);
+%         val_error = mean((v_y_trained - m_X_trained*v_w_val).^2);
+%     end
+    
+    function loo_error = exact_loo(m_X, v_y, lambda, v_w_0, rho)
+        
+        N = length(v_y); assert(size(m_X, 1)==N);
+        P = size(m_X, 2);
+        
+        if exist('rho', 'var')
+            m_Phi = m_X'*m_X + rho*eye(P);
+        else
+            m_Phi = m_X'*m_X ;
+        end
+        v_r = m_X'*v_y;
+        my_alpha = 10/trace(m_Phi);
+        hl = OHO_Lasso;
+        hl.tol = 1e-4;
+        v_looErrors = zeros(N,1);
+        ltc = LoopTimeControl(N);
+        for j =1:N
+            v_x_j = m_X(j,:)';
+            m_Phi_j = m_Phi - v_x_j * v_x_j';
+            v_r_j   = v_r   - v_y(j)* v_x_j;
+            v_w_j = hl.ista(v_w_0, m_Phi_j, v_r_j, my_alpha, lambda);
+            v_looErrors(j) = v_y(j)-m_X(j,:)*v_w_j;
+            ltc.go(j);
+        end
+        loo_error = mean(v_looErrors.^2)./mean(v_y.^2);
+    end
+end
 
 end
