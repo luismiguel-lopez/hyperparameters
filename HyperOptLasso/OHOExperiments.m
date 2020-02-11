@@ -1113,7 +1113,8 @@ methods %experiments
     end
         
     function F = experiment_50(obj)
-        % Elastic Net ( rest of params copied from Experiment_36)
+        % Elastic Net ( rest of params were copied from Experiment_36)
+        % with memory
         
         obj.n_train = 200;
         obj.p = 100;
@@ -1122,20 +1123,23 @@ methods %experiments
         obj.seed = 9;
         [A_train, A_test, y_train, y_test, true_x] = obj.set_up_data();
         hen = OHO_ElasticNet;
-        hen.mirror_type = 'log';
+        hen.mirror_type = 'grad'; %! it was log before
         hen.b_online = 1;
-        hen.max_iter_outer= 2000; %!
+        hen.max_iter_outer= 5000; %!
+        
 %        memory_factor= 10;
 %         spoq = QStepsize;
 %         spoq.eta_0 = 10;
 %         spoq.beta_2 = 1-1/(memory_factor*obj.n_train);
 %         spoq.beta_1 = 1-1/(memory_factor*obj.n_train);
 %         spoq.nu = 20;
-        spoq = ConstantStepsize;
-        spoq.eta_0 = 50;
-        hen.stepsize_policy = spoq;     
+        sp = DiminishingStepsize;
+        %sp.law = @(x)x;
+        sp.eta_0 = 10000;
+        
+        hen.stepsize_policy = sp;     
         hen.debug= 1;
-        hen.normalized_lambda_0 = 1/obj.n_train;
+        hen.normalized_lambda_0 = 0.1/obj.n_train; %! it was 1/n_train
 %         hl.normalized_lambda_0 = 1/sqrt(obj.n_train);
 %         hl.tol = 1e-4;
 %         hl.b_memory = 1;
@@ -1147,11 +1151,12 @@ methods %experiments
         [lambda_inexact, count_inexact, v_w_final] ...
             = hen.solve_approx_mirror(A_train, y_train);
 
-        figure(35); clf
-        plot(cumsum(count_inexact), lambda_inexact);        
+        figure(50); clf
+        plot(cumsum(count_inexact), lambda_inexact);  
+        title 'Elastic net'
         xlabel '# ISTA iterations'
         ylabel '\lambda'
-        legend('Exact with memory','Inexact, memoryless')
+        legend('\lambda','\rho')
         drawnow
         
         %%
@@ -1159,7 +1164,7 @@ methods %experiments
 
 %         final_lambda_exact = lambda_exact(find(count_exact>0, 1, 'last'));
         final_niter = find(count_inexact>0, 1, 'last');
-        final_lambda = lambda_inexact(final_niter, 1);
+        final_lambda = lambda_inexact(1, final_niter);
         final_rho    = mean(lambda_inexact(ceil(final_niter/2):final_niter, 2));
         v_testLambdas = final_lambda*logspace(-1, 0.5);
         v_looLambdas = final_lambda*linspace(0.3, 3, 15);
@@ -1168,17 +1173,64 @@ methods %experiments
         v_valErrors  = v_testErrors;
         v_looErrors  = zeros(size(v_looLambdas));
         
-        disp 'Computing test errors'
-        for k = 1:length(v_testLambdas)
-            v_testErrors(k) = obj.estimate_outOfSample_error(A_train, ...
-                y_train, A_test, y_test, v_testLambdas(k), v_w_final, final_rho);
-            v_valErrors(k) = obj.estimate_outOfSample_error(A_test, ...
-                y_test, A_train, y_train, v_testLambdas(k), v_w_final, final_rho);
-        end
-        test_error = mean((y_test-A_test*v_w_final).^2)./mean(y_test.^2);
+        compute_loo = 0;
+        compute_alo = 0;
+        if compute_loo
+            disp 'Computing test errors'
+            for k = 1:length(v_testLambdas)
+                v_testErrors(k) = obj.estimate_outOfSample_error(A_train, ...
+                    y_train, A_test, y_test, v_testLambdas(k), v_w_final, final_rho);
+                v_valErrors(k) = obj.estimate_outOfSample_error(A_test, ...
+                    y_test, A_train, y_train, v_testLambdas(k), v_w_final, final_rho);
+            end
+            test_error = mean((y_test-A_test*v_w_final).^2)./mean(y_test.^2);
+
+            val_error  = obj.estimate_outOfSample_error(A_test, ...
+                y_test, A_train, y_train, final_lambda, v_w_final, final_rho);
+
+            disp 'Computing loo errors'
+            for kl = 1:length(v_looLambdas)
+                v_looErrors(kl) = obj.exact_loo(...
+                    A_train, y_train, v_looLambdas(kl), v_w_final, final_rho);
+            end  
+            ind_final_lambda = find(v_looLambdas==final_lambda, 1,'first');
+            if isempty(ind_final_lambda)
+                loo_error = obj.exact_loo(A_train, y_train, ...
+                    final_lambda, v_w_final, final_rho);
+            else
+                loo_error = v_looErrors(ind_final_lambda);
+            end
+            
+            figure(135); clf
+            loglog(v_testLambdas, v_testErrors);hold on
+            loglog(v_testLambdas, v_valErrors, 'r')
+            loglog(v_looLambdas, v_looErrors,'g')
         
-        val_error  = obj.estimate_outOfSample_error(A_test, ...
-            y_test, A_train, y_train, final_lambda, v_w_final, final_rho);
+            plot(final_lambda, test_error, 'xb')
+            plot(final_lambda, val_error, 'xr')
+            plot(final_lambda, loo_error, 'xg')
+            
+            my_legend = {'Out-of-sample test error', ...
+            'Out-of-sample validation error', 'Leave-one-out error',...
+            'Inexact, memoryless', '', '' };
+        
+            xlabel \lambda
+            ylabel MSE
+            if compute_alo
+                disp 'Computing approximate loo errors'
+                v_aloErrors = obj.estimate_alo_error(A_train, y_train, ...
+                    [v_aloLambdas' ones(size(v_aloLambdas))'*final_rho], ...
+                    v_w_final);
+                loglog(v_aloLambdas, v_aloErrors, 'm')
+                my_legend = {my_legend(:), 'Approximate Loo (Wang, 2018)'};
+            end
+            legend(my_legend)
+        end
+        
+        %%
+        save SavedResults_50
+    end
+    
 
         disp 'Computing loo errors'
         for kl = 1:length(v_looLambdas)
