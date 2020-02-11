@@ -5,7 +5,7 @@ classdef OHOExperiments
         p       = 100;     % Dimensionality of dataset
         seed    = 3;       % Random seed
         sigma   = 0.3;     % Variance of the noise
-        sparsity = 0.8;    % proportion of entries of true_x that are > 0
+        sparsity = 0.2;    % proportion of entries of true_x that are > 0
         
         b_colinear = 0;    %introduce colinear variables when creating 
         % synthetic data (see set_up_data method)
