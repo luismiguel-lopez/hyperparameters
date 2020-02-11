@@ -25,10 +25,10 @@ methods
         v_r   = m_X'*v_y;
         alpha = 10/trace(m_Phi);
         lambda_max = max(abs(v_r));
-        m_lambda = zeros(obj.max_iter_outer, 2); % EN: now 2 hyperparams
+        m_lambda = zeros(2, obj.max_iter_outer); % EN: now 2 hyperparams
         m_lambda(1, 1) = lambda_max.*obj.normalized_lambda_0;
-        m_lambda(1, 2) = m_lambda(1,1)/100;
-        v_w_0 = obj.ista(zeros(P,1), m_Phi+eye(P)*m_lambda(1,2), ...
+        m_lambda(2, 1) = m_lambda(1,1)/10;
+        v_w_0 = obj.ista(zeros(P,1), m_Phi+eye(P)*m_lambda(2,1), ...
             v_r, alpha, m_lambda(1, 1));
         %v_w_0 = zeros(P,1); %used this line to look in the oos-error
         if obj.b_memory
@@ -36,12 +36,12 @@ methods
         else
             v_w_j = sparse(v_w_0);
         end
-        m_eta = zeros(obj.max_iter_outer, 2);
+        m_eta = zeros(2, obj.max_iter_outer);
         my_sp = obj.stepsize_policy;
-        m_eta(1,:)= my_sp.eta_0;
+        m_eta(:, 1)= my_sp.eta_0;
         v_it_count = zeros(obj.max_iter_outer, 1);
         v_kappas= zeros(obj.max_iter_outer, 1); %only for debug plots
-        v_oos_error = zeros(obj.max_iter_outer,1);
+        v_crossval_error = zeros(obj.max_iter_outer,1);
         
         v_j = mod(0:obj.max_iter_outer-1, N)+1;
         my_sp.k = 1;
@@ -49,7 +49,7 @@ methods
         combo = 0;
         for k = 2:obj.max_iter_outer
             g = 0;
-            v_oos_error(k) = 0;
+            v_crossval_error(k) = 0;
             v_it_count(k) = 0;
             if obj.b_online
                 v_indices_k = v_j(k);
@@ -58,44 +58,46 @@ methods
             end
             for j = v_indices_k
                 v_x_j = m_X(j,:)';
-                m_Phi_j_plus_rhoI = m_Phi - v_x_j * v_x_j' + m_lambda(k-1, 2)*eye(P);
+                m_Phi_j_plus_rhoI = m_Phi - v_x_j * v_x_j' + m_lambda(2, k-1)*eye(P);
                 v_r_j   = v_r   - v_y(j)* v_x_j;
                 if obj.b_memory
                     [v_w_j, v_w_f, niter_out] = obj.ista(m_W(:,j), ...
-                        m_Phi_j_plus_rhoI, v_r_j, alpha, m_lambda(k-1, 1));
+                        m_Phi_j_plus_rhoI, v_r_j, alpha, m_lambda(1, k-1));
                     m_W(:,j) = v_w_j;
                 else
                     [v_w_j, v_w_f, niter_out] = obj.ista(v_w_j, ...
-                         m_Phi_j_plus_rhoI, v_r_j, alpha, m_lambda(k-1, 1));
+                         m_Phi_j_plus_rhoI, v_r_j, alpha, m_lambda(1, k-1));
                     v_w_j = sparse(v_w_j);
                 end
                 v_s_j = max(-1, min(1, ...
-                    1/(alpha*m_lambda(k-1, 1))*v_w_f));
+                    1/(alpha*m_lambda(1, k-1))*v_w_f));
                 b_elasticNet = 1;
                 if b_elasticNet
                     g = g + alpha*[v_s_j';v_w_j']*v_x_j*(v_y(j)- v_x_j'*(v_w_j- ...
-                        alpha*(m_Phi_j_plus_rhoI*v_w_j - v_r_j + m_lambda(k-1, 1)*v_s_j)));
+                        alpha*(m_Phi_j_plus_rhoI*v_w_j - v_r_j + m_lambda(1, k-1)*v_s_j)));
                 else %old code
                     g = g + alpha* v_x_j'*v_s_j*(v_y(j)- v_x_j'*(v_w_j- ...
-                        alpha*(m_Phi_j_plus_rhoI*v_w_j - v_r_j + m_lambda(k-1, 1)*v_s_j)));
+                        alpha*(m_Phi_j_plus_rhoI*v_w_j - v_r_j + m_lambda(1, k-1)*v_s_j)));
                 end
                 v_it_count(k) = v_it_count(k) + niter_out;
-                v_oos_error(k) = v_oos_error(k) + sum((m_X*v_w_j-v_y).^2);
+                aiej = 1:N; aiej(j) = []; %all indices except j
+                v_crossval_error(k) = v_crossval_error(k) + sum(...
+                    (m_X(aiej,:)*v_w_j-v_y(aiej)).^2);
             end
 %             if obj.b_memory % to be removed
-%                 v_oos_error(k) = sum((sum(m_W.*m_X')-v_y').^2);
+%                 v_crossval_error(k) = sum((sum(m_W.*m_X')-v_y').^2);
 %             else
-%                 v_oos_error(k) = sum((m_X*v_w_j-v_y).^2);
+%                 v_crossval_error(k) = sum((m_X*v_w_j-v_y).^2);
 %             end
-            m_eta(k,:) = my_sp.update_stepsize(g, ...
-                m_lambda(k-1,:));
-            m_lambda(k,:) = obj.mirror_step(m_lambda(k-1,:), g, m_eta(k,:));
+            m_eta(:, k) = my_sp.update_stepsize(g, ...
+                m_lambda(:, k-1));
+            m_lambda(:, k) = obj.mirror_step(m_lambda(:, k-1), g, m_eta(:, k));
             
 %             b_stopping_criterion = norm(my_sp.v_u)<obj.tol_g &&  ...
 %                     k > N && all( abs(my_sp.v_q-0.5) < my_sp.dqg );
             try
                 b_improvement_is_small = all( ...
-                    abs(my_sp.v_u)*N*m_eta(k)<obj.tol_g*lambda_max );
+                    abs(my_sp.v_u)*N*m_eta(:, k)<obj.tol_g*lambda_max );
             catch
                 b_improvement_is_small = 0;
             end
@@ -121,13 +123,14 @@ methods
                 if obj.debug && mod(k, 100) == 0
                     figure(101); clf
                     subplot(411);
-                    plot(m_lambda); title '\lambda'
+                    plot(m_lambda'); title 'Hyperparams'
+                    legend('\lambda', '\rho')
                     subplot(412);
-                    plot(m_eta);    title '\eta'
+                    plot(m_eta');    title '\eta'
                     subplot(413);
                     plot(v_kappas); title '\kappa'
                     subplot(414)
-                    plot(v_oos_error); title 'out-of-sample error'
+                    plot(v_crossval_error); title 'cross-validation error'
                     drawnow
 %                   if isa(my_sp, 'LinearRegressionStepsize')
 %                       my_sp.plot_state();
@@ -139,11 +142,11 @@ methods
         %output
         if obj.b_memory
             w_jackknife = mean(m_W, 2); %jackknife estimator?
-            w_out = obj.ista(w_jackknife, m_Phi+m_lambda(k,2)*eye(P), v_r, alpha, m_lambda(k,1));
+            w_out = obj.ista(w_jackknife, m_Phi+m_lambda(2, k)*eye(P), v_r, alpha, m_lambda(1, k));
         else
             obj.tol = 1e-4;
             %TODO: w_jackknife = running average of w_j's
-            w_out = obj.ista(v_w_j, m_Phi+m_lambda(k,2)*eye(P), v_r, alpha, m_lambda(k,1));
+            w_out = obj.ista(v_w_j, m_Phi+m_lambda(2, k)*eye(P), v_r, alpha, m_lambda(1, k));
         end
     end
     
@@ -180,16 +183,19 @@ methods
     end
     
     function x_out = mirror_step(obj, x_in, g, beta)
+        assert(iscolumn(x_in), 'x must be a column vector')
+        assert(iscolumn(g),    'g must be a column vector')
+        assert(iscolumn(beta), 'step size must be a column vector')
         switch obj.mirror_type
             case 'grad'
-                x_out = max(0, x_in - beta*g);
+                x_out = max(0, x_in - beta.*g);
             case 'log'
                 if g*beta < -0.9
                     warning 'negative d times beta too large'
                     warning 'rate of increase capped at 10'
                     x_out = 10*x_in;
                 else
-                    x_out = x_in/(1+beta*g);
+                    x_out = x_in/(1+beta.*g);
                 end
                 % TODO: maybe also interesting to check whether x exceeds
                 % a maximum value (in this case, lambda_max)
