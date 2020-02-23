@@ -26,6 +26,12 @@ classdef QStepsize < StepsizePolicy
     end
     
     methods
+        function reset(obj)
+            reset@StepsizePolicy(obj)
+            obj.v_v = 0;
+            obj.v_u = 0;
+        end
+            
         function v_eta_out = update_stepsize(obj, v_g, ~)
             obj.k = obj.k+1;
             if isempty(obj.v_eta)

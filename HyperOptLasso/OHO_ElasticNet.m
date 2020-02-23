@@ -16,7 +16,7 @@ properties
     
     approx_type = 'soft'; % type of connvex approximation (hard or soft)
         
-    debug = 1; %flag for debugging mode
+    b_debug = 1; %flag for debugging mode
     
 end
 
@@ -87,9 +87,11 @@ methods
                 end
                 
                 v_it_count(k) = v_it_count(k) + niter_out;
-                aiej = 1:N; aiej(j) = []; %all indices except j
-                v_crossval_error(k) = v_crossval_error(k) + sum(...
-                    (m_X(aiej,:)*v_w_j-v_y(aiej)).^2);
+                if obj.b_debug
+                    aiej = 1:N; aiej(j) = []; %all indices except j
+                    v_crossval_error(k) = v_crossval_error(k) + sum(...
+                        (m_X(aiej,:)*v_w_j-v_y(aiej)).^2);
+                end
             end
 
             m_eta(:, k) = my_sp.update_stepsize(g, ...
@@ -116,14 +118,14 @@ methods
             end
 
             ltc.go(k);
-            if obj.debug
+            if obj.b_debug
                 try
                     v_sigma2 = my_sp.v_v...
                         - my_sp.v_u.^2; assert( all(v_sigma2>0) )              
                     m_kappas(:, k) = qfunc(my_sp.v_u ...
                         ./sqrt(v_sigma2));
                 end                
-                if obj.debug && mod(k, 100) == 0
+                if obj.b_debug && mod(k, 100) == 0
                     figure(101); clf
                     subplot(411);
                     plot(m_lambda'); title 'Hyperparams'

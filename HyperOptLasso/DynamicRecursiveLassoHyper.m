@@ -1,11 +1,13 @@
 classdef DynamicRecursiveLassoHyper
     % Algorithm for Online Hyperparmeter Optimization for the Lasso
     % regularizaction parameter in the DYNAMIC setting
+    % Recursive objective (TIRSO style)
 properties
     stepsize_w
     stepsize_lambda
     
     approx_type = 'soft' %approximation type (soft or hard)
+    
     forgettingFactor = 0.9;
     
     %debug = 1
@@ -14,14 +16,20 @@ end
 
 methods
     function [v_w_next, lambda_next, loss, m_Phi_next, v_r_next] = update(obj, v_w_t, lambda_t, ...
-            v_x_t, y_t, v_x_next, y_next, m_Phi_t, v_r_t)
-        
-        alpha = obj.stepsize_w;
-        gamma = obj.forgettingFactor;
+            v_x_t, y_t, v_x_next, y_next, m_Phi_t, v_r_t, t)
         
         % update recursive figures Phi and r
+        gamma = obj.forgettingFactor;
         m_Phi_next = gamma*m_Phi_t + (1-gamma)*(v_x_t*v_x_t');
         v_r_next   = gamma*v_r_t   + (1-gamma)*(v_x_t*y_t);
+        try
+            alpha = double(obj.stepsize_w);
+        catch ME
+            assert(strcmp(ME.identifier, 'MATLAB:invalidConversion') &... 
+                isa(obj.stepsize_w, 'function_handle'), ... 
+            'stepsize_w must either be a number or a Function Handle')
+            alpha = feval(obj.stepsize_w, trace(m_Phi_next), t);         
+        end
         
         %Online ISTA produces w^f[t];
         v_wf_t = v_w_t - alpha*(m_Phi_next*v_w_t - v_r_next);

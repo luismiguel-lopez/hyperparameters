@@ -14,9 +14,30 @@ properties
 end
 
 methods
+    
+    % Update derived on Feb 15, 2020
+    function [v_wf_next, v_w_t, lambda_next, loss_t] = update_alt(obj, ...
+        v_wf_t, lambda_t, v_x_t, y_t)
+
+        alpha = obj.stepsize_w;
+        beta  = obj.stepsize_lambda;
+        
+        v_w_t = obj.soft_thresholding(v_wf_t, alpha*lambda_t);
+        prediction_error = y_t - v_x_t'*v_w_t;
+        loss_t = prediction_error.^2;
+        v_z_t = max(-1, min(1, v_wf_t./(alpha*lambda_t))); %soft
+        lambda_next = max(0, lambda_t - beta*prediction_error*alpha ...
+            * v_x_t'*v_z_t);
+        m_phi_t = v_x_t*v_x_t';
+        v_r_t   = v_x_t*v_y_t;
+        v_wf_next = v_w_t - alpha*(m_phi_t*v_w_t - v_r_t);
+    end
+    
+    % update taken from report
     function [v_w_next, lambda_next, loss, L_hat_next] = update(obj, v_w_t, lambda_t, ...
             v_x_t, y_t, v_x_next, y_next, L_hat_t, t)
-                
+               
+        beta = obj.stepsize_lambda;       
         L_now = v_x_t'*v_x_t;
         try
             alpha = double(obj.stepsize_w);
@@ -58,8 +79,10 @@ methods
                 v_zHard_t = (z_argument > 1)  -  (z_argument < -1);
                 v_g_t = prediction_error*alpha*v_x_next'*v_zHard_t;
         end
-        beta = obj.stepsize_lambda;
         lambda_next = max(0, lambda_t - beta*v_g_t);
+        
+        % v_wf_next = v_w_next -
+        % alpha(v_x_next*(v_x_next*(v_x_next'*v_w_next) - y_next*v_x_next)
     end
 end
 
