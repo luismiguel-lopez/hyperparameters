@@ -41,6 +41,7 @@ classdef LoopTimeControl < handle;
 		myString = [];
 		totalIter;
 		b_displayAll = 0;
+        b_erase = 1
 	end
 	
 	methods
@@ -70,7 +71,9 @@ classdef LoopTimeControl < handle;
 				obj.tLast = tic;
 				obj.elapsedTime = toc(obj.tBegin);
 				obj.eta = (obj.totalIter - i) * obj.elapsedTime ./ i;
-				fprintf(repmat('\b', 1, length(obj.myString)));
+                if obj.b_erase
+                    fprintf(repmat('\b', 1, length(obj.myString)));
+                end
 				obj.myString = sprintf(...
 					'Iteration %0.4g out of %d. ETA = %s', ...
 					i, obj.totalIter, print_time(obj.eta));
