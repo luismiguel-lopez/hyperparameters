@@ -108,7 +108,7 @@ methods % Routines
         v_wfBar = zeros(obj.P, 1);
         v_grad = zeros(1, obj.T);
         v_wf_t = zeros(obj.P, 1);
-        v_c_t = zeros(obj.P, 1);
+        v_c_t  = zeros(obj.P, 1);
         v_w_bar = zeros(obj.P, 1);
         
         if isa(estimator, 'FranceschiRecursiveElasticNet')

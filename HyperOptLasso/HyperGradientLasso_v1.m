@@ -15,7 +15,6 @@ properties
     normalized_lambda_0 = 0.01;
     
     b_online = 0;
-    b_memory = 1;
     
 end
 
@@ -42,15 +41,10 @@ methods
         end
         
         [v_w_0, v_c_0, v_it_count(1)] = obj.ista_fg(...
-            zeros(P, 1), m_F, v_r, v_lambda(1), zeros(P, 1));
-        
-        if obj.b_memory %initialize m_W
-            m_W = repmat(sparse(v_w_0), [1 N]);
-            m_C = repmat(sparse(v_c_0), [1 N]);
-        else
-            v_w_j = sparse(v_w_0);
-            v_c_j = sparse(v_c_0);
-        end
+            zeros(P, 1), m_F, v_r, v_lambda(1), 0);
+        %initialize m_W
+        m_W = repmat(sparse(v_w_0), [1 N]);
+        m_C = repmat(sparse(v_c_0), [1 N]);
         
         v_j = mod(0:obj.max_iter_outer-1, N)+1; % so the online is cyclic
         running_average_g = 0;
@@ -64,10 +58,8 @@ methods
             v_it_count(k_outer) = 0;
             for j = v_indices_k
                 v_x_j = m_X(:, j);
-                if obj.b_memory
-                    v_w_j = sparse(m_W(:, j));
-                    v_c_j = sparse(m_C(:, j));
-                end
+                v_w_j = m_W(:, j);
+                v_c_j = m_C(:, j);
                 m_F_j = m_F - v_x_j*v_x_j'/N;
                 v_r_j = v_r - v_x_j*v_y(j)/N;
                 
@@ -75,13 +67,8 @@ methods
                     v_w_j, m_F_j, v_r_j, v_lambda(k_outer-1), v_c_j);
                 
                 sum_g = sum_g - (v_y(j) - v_w_j'*v_x_j)*(v_x_j'*v_c_j);
-                if obj.b_memory
-                    m_W(:, j) = v_w_j;
-                    m_C(:, j) = v_c_j;
-                else
-                    v_w_j = sparse(v_w_j);
-                    v_c_j = sparse(v_c_j);
-                end
+                m_W(:, j) = v_w_j;
+                m_C(:, j) = v_c_j;
                 v_it_count(k_outer) = v_it_count(k_outer) + v_it_count_j;
                 ltc_j.go(j);
             end
@@ -107,9 +94,6 @@ methods
         end
         if k_outer == obj.max_iter_outer
             disp 'Maximum number of iterations exceeded.'
-        end
-        if not(obj.b_memory)
-            m_W = v_w_j;
         end
     end
     
