@@ -29,7 +29,7 @@ methods
         N = length(v_y); assert(size(m_X, 1)==N);
         P = size(m_X, 2); % m_X is NxP
         m_Phi = m_X'*m_X/N;
-        v_r   = m_X'*v_y/N;
+        v_r   = m_X'*v_y(:)/N;
         alpha = obj.c_alpha/trace(m_Phi);
         lambda_max = max(abs(v_r));
         v_lambda = zeros(1, obj.max_iter_outer);
@@ -193,7 +193,7 @@ methods
             if norm(v_grad_violations) < obj.tol_w && ...
                     all(abs(v_v_j).*(v_w_j==0) < lambda) && ...
                     k_inner>obj.min_iter_inner
-                it_count = k_inner;
+                it_count = k_inner-1;
                 break; 
             end
             
