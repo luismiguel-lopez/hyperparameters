@@ -210,16 +210,18 @@ methods % Routines
         end
     end
     
-    function v_avgLoss = grid_search_lambda(obj, estimator, m_X, v_y, v_lambda_grid, T_begin)
+    function [v_avgLoss, c_lambdas, c_losses] = grid_search_lambda(obj, estimator, m_X, v_y, v_lambda_grid, T_begin)
         if ~exist('T_begin', 'var'), T_begin = floor(obj.T/2); end
         
         estimator.stepsize_lambda = 0;
         n_lambdas = numel(v_lambda_grid);
         v_avgLoss = zeros(size(v_lambda_grid));
+        c_losses  = cell(1, n_lambdas);
+        c_lambdas = cell(1, n_lambdas);
         for li = 1:n_lambdas
-            [~, ~, v_loss] = drill_online_learning(obj, estimator, m_X,...
+            [~, c_lambdas{li}, c_losses{li}] = drill_online_learning(obj, estimator, m_X,...
                 v_y, v_lambda_grid(li));
-            v_avgLoss(li) = mean(v_loss(T_begin:end))./mean(v_y(T_begin:end).^2);
+            v_avgLoss(li) = mean(c_losses{li}(T_begin:end))./mean(v_y(T_begin:end).^2);
         end
     end
     
@@ -878,7 +880,7 @@ methods % Experiments
         
         figure(exp_no*100+1); clf
         subplot(1,2,1);
-            obj.show_lambda_iterates([v_lambda])%; v_lambda_grad])        %!
+            obj.show_lambda_iterates(v_lambda)%; v_lambda_grad])        %!
         subplot(1,2,2)
             obj.plot_normalizedLosses([m_losses; v_loss_genie], v_loss_zero);
         legend(c_legend)
@@ -1106,7 +1108,7 @@ methods % Experiments
     end
 
 
-    % Comparison between DynamicRecursiveLassoHyper and FranceschiTirso, 
+    % Comparison between DynamicRecursiveLassoHyper and FranceschiRecursiveLasso, 
     % which combines the Dynamic Recursive Lasso with the forward
     % gradient-based hyperparameter optimization discussed in [Franceschi,
     % 2017]. SUCCESS!!
@@ -1120,6 +1122,10 @@ methods % Experiments
         dlh = FranceschiRecursiveLasso;
         dlh.stepsize_w = 3e-4;
         dlh.stepsize_lambda = 1e-5;
+        dlh.b_use_next_c = 0;
+        
+        dlh_usenext = dlh;
+        dlh_usenext.b_use_next_c = 1;
 
         dlh_ls = DynamicRecursiveLassoHyper;
         dlh_ls.stepsize_w = 3e-4;
@@ -1127,7 +1133,8 @@ methods % Experiments
                 
         %run the online estimators
         [m_W, v_lambda, v_loss] = obj.drill_online_learning(dlh, m_X, v_y, 0);
-        [m_W_ls, v_lambda_ls, v_loss_ls]  = obj.drill_online_learning(dlh_ls, m_X, v_y, 0);
+        [m_W_next, v_lambda_next, v_loss_next] = obj.drill_online_learning(dlh_usenext, m_X, v_y, 0);
+        [m_W_ls, v_lambda_ls, v_loss_ls]  = obj.drill_online_learning(dlh_ls, m_X, v_y, 0);       
         
         final_lambda = mean(v_lambda(floor(obj.T/2):end));
         
@@ -1152,13 +1159,13 @@ methods % Experiments
         exp_no = obj.determine_experiment_number();
         %% Figures
         ch_lambdaLabel = sprintf('\\lambda = %g', lambda_heldout);
-        c_legend = {'Franceschi', 'ls', ch_lambdaLabel, 'genie'};
+        c_legend = {'Franceschi', 'FNext', 'ls', ch_lambdaLabel, 'genie'};
         
         figure(exp_no*100+1); clf
         subplot(1,2,1);
-            obj.show_lambda_iterates([v_lambda; v_lambda_ls; v_lambda_bestLambda])
+            obj.show_lambda_iterates([v_lambda; v_lambda_next; v_lambda_ls; v_lambda_bestLambda])
         subplot(1,2,2)
-            obj.plot_normalizedLosses([v_loss; v_loss_ls; v_loss_bestLambda; ...
+            obj.plot_normalizedLosses([v_loss; v_loss_next; v_loss_ls; v_loss_bestLambda; ...
                 v_loss_genie], v_loss_zero);
             legend(c_legend)
             
@@ -1171,7 +1178,7 @@ methods % Experiments
         
         if obj.T <= 200000
             figure(exp_no*100+2); clf
-                t_W = cat(3, m_W, m_W_ls, m_W_bestLambda);
+                t_W = cat(3, m_W, m_W_next, m_W_ls, m_W_bestLambda);
                 obj.show_w(t_W, true_w, c_legend(1:end-1));
         end
         
@@ -1261,7 +1268,7 @@ methods % Experiments
         end
     end
 
-    % Same as 60 and 61, but Elastic Net
+    % Same as 60 and 61, but Elastic Net - no succes yet
     function F = experiment_62(obj)
         
         obj.T = 150000;
@@ -1354,7 +1361,7 @@ methods % Experiments
         end
     end
 
-        % Same as 60, 61, and 52, but Weighted Lasso and Adaptive Lasso
+    % Same as 60, 61, and 52, but Weighted Lasso and Adaptive Lasso
     function F = experiment_63(obj)
         
         obj.T = 150000; %! 150000
@@ -1466,16 +1473,137 @@ methods % Experiments
         end
     end
 
+    % FranceschiRecursiveLasso
+    % Time-varying weights: abrupt change
+    function F = experiment_70(obj)
+        
+        obj.T = 80000;
+        %generate data 
+        [m_X_first,  v_y_first,  true_w_first] = generate_pseudo_streaming_data(obj);
+        obj.seed = obj.seed+1;
+        obj.sparsity = obj.sparsity*2;
+        obj.SNR = obj.SNR*5;
+        [m_X_second, v_y_second, true_w_second] = generate_pseudo_streaming_data(obj);
+        m_X = [m_X_first m_X_second];
+        v_y = [v_y_first v_y_second];
+        
+        obj.T = 2*obj.T;
+        alpha = 3e-4;
+        beta = 3e-6;
+               
+        %create estimators
+        dlh = FranceschiRecursiveLasso;
+        dlh.stepsize_w = alpha;
+        dlh.stepsize_lambda = beta;
+
+        dlh_ls = DynamicRecursiveLassoHyper;
+        dlh_ls.stepsize_w = alpha;
+        dlh_ls.stepsize_lambda = 0;
+                
+        %run the online estimators
+        [m_W, v_lambda, v_loss] = obj.drill_online_learning(dlh, m_X, v_y, 0);
+        [m_W_ls, ~, v_loss_ls]  = obj.drill_online_learning(dlh_ls, m_X, v_y, 0);       
+        
+        lambda_first = mean(v_lambda(floor(obj.T/4):floor(obj.T/2)));
+        lambda_second = mean(v_lambda(floor(obj.T/2):floor(3*obj.T/4)));
+        lambda_avg = mean([lambda_first lambda_second]);
+        
+        %do a grid search over lambda (static lambda for the whole period)
+        v_lambda_grid = linspace(0.4, 2.5, 15)*lambda_avg;
+        [v_avgLoss, c_lambdas, c_losses] = obj.grid_search_lambda(dlh, m_X, v_y, v_lambda_grid);
+        [~, best_lambda_idx] = min(v_avgLoss);
+        lambda_static = v_lambda_grid(best_lambda_idx);
+        v_lambda_staticLambda = c_lambdas{best_lambda_idx};
+        v_loss_staticLambda   = c_losses{best_lambda_idx};
+
+        % two more grid searches over lambda (for the first and second
+        % halves)
+        v_lambda_grid_first  = linspace(0.7, 1.3, 15)*lambda_first;
+        obj_halfT = obj;
+        obj_halfT.T = obj.T/2;
+        [v_avgLoss_first, c_lambdas_first, c_losses_first] = ...
+            obj_halfT.grid_search_lambda(dlh, m_X_first, v_y_first, v_lambda_grid_first);
+        [~, best_lambda_first] = min(v_avgLoss_first);
+        %lambda_gs_first = v_lambda_grid_first(best_lambda_first);
+        v_lambda_first  = c_lambdas_first{best_lambda_first};
+        v_loss_first   = c_losses_first{best_lambda_first};
+        
+        v_lambda_grid_second = linspace(0.7, 1.3, 15)*lambda_second;
+        [v_avgLoss_second, c_lambdas_second, c_losses_second] = ...
+            obj_halfT.grid_search_lambda(dlh, m_X_second, v_y_second, v_lambda_grid_second);
+        [~, best_lambda_second] = min(v_avgLoss_second);
+        %lambda_gs_second = v_lambda_grid_second(best_lambda_second);
+        v_lambda_second  = c_lambdas_second{best_lambda_second};
+        v_loss_second   = c_losses_second{best_lambda_second};
+        
+        v_loss_genie = ((v_y - [true_w_first'*m_X_first true_w_second'*m_X_second]).^2);
+        v_loss_zero  = (v_y).^2;
+        
+        exp_no = obj.determine_experiment_number();
+        %% Figures
+        ch_lambdaLabel = sprintf('\\lambda = %g', lambda_static);
+        c_legend = {'Franceschi', 'least-squares', ch_lambdaLabel, 'Best Time-varying \lambda', 'genie'};
+        
+        figure(exp_no*100+1); clf
+        subplot(1,2,1);
+            obj.show_lambda_iterates([v_lambda; ...
+                v_lambda_staticLambda; [v_lambda_first v_lambda_second]])
+            legend('Franceschi', 'Best static \lambda', 'Best Time-varying \lambda');
+        subplot(1,2,2)
+            filter_coefs = ones(1, round(obj.T/10));
+            obj.plot_normalizedLosses([v_loss; v_loss_ls; ...
+                v_loss_staticLambda; [v_loss_first v_loss_second]; ...
+                v_loss_genie], v_loss_zero, filter_coefs);
+            legend(c_legend)
+            
+        figure(exp_no*100+3); clf
+        subplot(1 ,3, 1);
+            plot(v_lambda_grid, v_avgLoss);
+            xlabel \lambda; ylabel 'train loss'
+            legend('Whole period')
+        subplot(1, 3, 2);
+            plot(v_lambda_grid_first,  v_avgLoss_first);
+            xlabel \lambda; ylabel 'train loss'
+            legend('First sub-period')
+            title 'Cross-validated loss values'           
+        subplot(1, 3, 3);
+            plot(v_lambda_grid_second, v_avgLoss_second);
+            xlabel \lambda; ylabel 'train loss'
+            legend('Second sub-period')
+        
+        
+        if obj.T <= 200000
+            figure(exp_no*100+2); clf
+                t_W = cat(3, m_W, m_W_ls); % m_W_staticLambda
+                obj.show_w(t_W, [true_w_first, true_w_second], c_legend(1:end-1));
+        end
+        
+        %%
+        if obj.T <= 200000
+            ch_resultsFile = sprintf('results_DE_%d', exp_no);
+            save(ch_resultsFile);
+            F = 0;
+        end
+    end
+
 end
 
 methods (Static) %Plotting, etc
     
-    function plot_normalizedLosses(m_loss, v_reference)
+    function plot_normalizedLosses(m_loss, v_reference, filter_coefs)
+        if not(exist('filter_coefs', 'var')), filter_coefs = []; end
         T = size(m_loss, 2);
         assert(length(v_reference)==T, 'length of v_reference must match')
         bottom = 1;
         for k = 1:size(m_loss, 1)
-            normalizedLosses = cumsum(m_loss(k, :))./cumsum(v_reference);
+            if isempty(filter_coefs)
+                filtered_reference = cumsum(v_reference);
+                filtered_losses    = cumsum(m_loss(k, :));
+            else
+                filtered_reference = filter(filter_coefs, 1, v_reference );
+                filtered_losses    = filter(filter_coefs, 1, m_loss(k, :));
+            end
+            normalizedLosses = filtered_losses./filtered_reference;
             semilogy(normalizedLosses);
             hold on
             bottom = min(bottom, min(normalizedLosses(10:end)));
@@ -1495,8 +1623,14 @@ methods (Static) %Plotting, etc
     % estimates of the weight vector. True weights shown at the left
     function show_w(t_W, true_w, c_legend)
         T = size(t_W, 2);
+        T_thick = floor(T/20);
         P = length(true_w);
-        thick_true_w = repmat(true_w, [1 T/20]);
+        if size(true_w, 2)>1
+            thick_true_w = reshape(permute(repmat(true_w, [1 1 T_thick]), ...
+                [1 3 2]), [P 2*T_thick]);
+        else
+            thick_true_w = repmat(true_w, [1 T_thick]);
+        end
         imagesc(abs([thick_true_w reshape( t_W, ...
             [P, T*size(t_W,3)] )]));
         caxis([0 1])
