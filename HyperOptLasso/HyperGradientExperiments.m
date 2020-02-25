@@ -98,7 +98,7 @@ methods % Constructor and data-generating procedures
     end
 end
 
-methods % Dynamic learning routine
+methods % Dynamic learning-related routines: drill, and grid search
     
     function [m_W, v_lambda, v_loss] = drill_dynamic(obj, estimator, m_X, v_y, initial_lambda, T)
         [P_dim, N] = size(m_X); assert(length(v_y)==N);
@@ -106,10 +106,13 @@ methods % Dynamic learning routine
         m_W      = zeros(P_dim, T);
         v_loss   = zeros(1, T);
         
-        m_Phi = m_X*m_X';
-        v_r   = m_X*v_y(:);
+        m_Phi = m_X*m_X'/N;
+        v_r   = m_X*v_y(:)/N;
         v_wf_t = zeros(P_dim, 1);
         v_c_t  = zeros(P_dim, 1);
+        if isempty(estimator.stepsize_w)
+           estimator.stepsize_w = 0.5/trace(m_Phi);
+        end
         
         v_lambda = zeros(1, T);
         v_lambda(1) = initial_lambda;
@@ -121,6 +124,20 @@ methods % Dynamic learning routine
                 v_r, v_c_t] =  estimator.update( v_lambda(t), ...
                 m_X(:, n), v_y(n), v_wf_t, m_Phi, v_r, v_c_t);
             ltc.go(t);
+        end
+    end
+    
+    function v_avgLoss = grid_search_dynamic_lambda(obj, estimator, ...
+            m_X, v_y, v_lambda_grid, T, T_begin)
+        if ~exist('T_begin', 'var'), T_begin = floor(T/2); end
+        
+        estimator.stepsize_lambda = 0;
+        n_lambdas = numel(v_lambda_grid);
+        v_avgLoss = zeros(size(v_lambda_grid));
+        for li = 1:n_lambdas
+            [~, ~, v_loss] = obj.drill_dynamic(estimator, m_X,...
+                v_y, v_lambda_grid(li), T);
+            v_avgLoss(li) = mean(v_loss(T_begin:end))./mean(v_y.^2);
         end
     end
     
@@ -223,7 +240,7 @@ methods % Experiments
 
     % Online Gradient Descent
     % Comparing effect of different tolerances of ISTA
-    % (inexact approximation)
+    % (inexact approximation -- with memory)
     function F = experiment_3(obj)
         obj.n_train = 200;
         [A_train, y_train] = obj.generate_pseudo_streaming_data();
@@ -231,7 +248,7 @@ methods % Experiments
         hgl_online = HyperGradientLasso;
         hgl_online.b_online = 1;
         hgl_online.tol_g_lambda = 1e-4;        
-        hgl_online.stepsize_lambda = 3e-4;
+        hgl_online.stepsize_lambda = 1e-4;
         hgl_online.max_iter_outer = 10000;
         
         n_lambdas = 4;
@@ -280,22 +297,103 @@ methods % Experiments
     end
    
     % Online Gradient Descent
-    % With-memory vs memoryless
+    % With-memory, memoryless, and OHO (old
+    % version).
+    % Memoryless fails if executed with very coarse tolerance.
     function F = experiment_4(obj)
         obj.n_train = 200;
-        obj.seed = 9;
+        obj.seed = 10;
         [A_train, y_train] = obj.generate_pseudo_streaming_data();
         
         hgl_memory = HyperGradientLasso;
         hgl_memory.b_online = 1;
-        hgl_memory.stepsize_lambda = 3e-4;
+        hgl_memory.stepsize_lambda = 1e-4;
         hgl_memory.tol_w = 1e-2;
         hgl_memory.tol_g_lambda = 1e-4;
-        hgl_memory.max_iter_outer = 10; %10000
+        hgl_memory.max_iter_outer = 10000;
         
         hgl_no_mem = hgl_memory;
-        hgl_no_mem.stepsize_lambda = 3e-5;
-        hgl_no_mem.tol_w = 1e0;
+        hgl_no_mem.max_iter_outer = 2000;
+        hgl_no_mem.stepsize_lambda = 1e-4;
+        hgl_no_mem.tol_w = 1e-2; % 1e-1 is too coarse. 1e-2 is ok.
+        hgl_no_mem.b_memory = 0;
+        
+        [m_W_memory, v_lambda_memory, v_it_count_memory] = ...
+            hgl_memory.solve_gradient(A_train, y_train);
+        final_lambda_memory = v_lambda_memory(find(v_it_count_memory>0,1, 'last'));
+        average_w = mean(m_W_memory, 2);
+              
+        [m_W_nomem, v_lambda_nomem, v_it_count_nomem] = ...
+            hgl_no_mem.solve_gradient(A_train, y_train);
+        final_lambda_nomem = v_lambda_nomem(find(v_it_count_nomem>0,1, 'last'));
+        
+%         dlh = FranceschiRecursiveLasso; % Dynamic
+%         dlh.stepsize_w = 3e-4;
+%         dlh.stepsize_lambda = 1e-4;
+%         
+%         niter_dynamic = 10000;
+%         [m_W_dynamic, v_lambda_dynamic] = obj.drill_dynamic( ...
+%             dlh, A_train, y_train, 0, niter_dynamic);
+        
+        hl = OHO_Lasso;
+        hl.mirror_type = 'grad';
+        hl.b_online = 1;
+        hl.b_memory = 0;
+        hl.max_iter_outer= 2500;
+        hl.stepsize_policy = ConstantStepsize;
+        hl.tol_w = 1e0;
+        hl.stepsize_policy.eta_0 = 1e-2;
+        [v_lambda_OHO, v_count_OHO] ...
+            = hl.solve_approx_mirror(A_train', y_train);
+       
+        disp 'Computing loo errors' 
+        [v_looLambdas, v_looErrors, loo_error_final_lambda_nomem] = ...
+            obj.compute_loo_curve(final_lambda_nomem, linspace(...
+            0.2, ...1.1*final_lambda_nomem  -0.1*final_lambda_memory, ...
+            0.7, ...1.1*final_lambda_memory -0.1*final_lambda_nomem,  ...
+            21)./final_lambda_nomem, ...
+            average_w, A_train, y_train);
+        
+        exp_no = obj.determine_experiment_number();
+        %% Figures
+        figure(exp_no*100+1); clf
+        obj.show_lambda_vs_ista_iterates({v_lambda_memory, v_lambda_nomem, v_lambda_OHO},...
+            {v_it_count_memory, v_it_count_nomem, v_count_OHO})                
+        legend({'With-memory', 'Memoryless', 'OHO'})
+        
+        figure(exp_no*100+2); clf
+        plot(v_looLambdas, v_looErrors)
+        xlabel '\lambda'
+        ylabel 'LOO error'
+        hold on
+        plot(final_lambda_nomem, loo_error_final_lambda_nomem, 'xr')
+        
+        %% Save data
+        ch_resultsFile = sprintf('results_%s_%d', obj.ch_prefix, exp_no);
+        save(ch_resultsFile);
+        F = 0;
+    end
+
+    % Online Gradient Descent
+    % With-memory, memoryless and OHO (old version)
+    % An example where OHO works ok (see experiment_6 for an example where
+    % OHO fails).
+    function F = experiment_5(obj)
+        obj.n_train = 200;
+        obj.seed = 10;
+        [A_train, y_train] = obj.generate_pseudo_streaming_data();
+        
+        hgl_memory = HyperGradientLasso;
+        hgl_memory.b_online = 1;
+        hgl_memory.stepsize_lambda = 1e-4;
+        hgl_memory.tol_w = 1e-2;
+        hgl_memory.tol_g_lambda = 1e-4;
+        hgl_memory.max_iter_outer = 1000; %! 10000
+        
+        hgl_no_mem = hgl_memory;
+        hgl_no_mem.max_iter_outer = 1000;
+        hgl_no_mem.stepsize_lambda = 1e-4;
+        hgl_no_mem.tol_w = 1e-3;
         hgl_no_mem.b_memory = 0;
         
         [m_W_memory, v_lambda_memory, v_it_count_memory] = ...
@@ -309,31 +407,129 @@ methods % Experiments
         final_lambda_nomem = v_lambda_nomem(find(v_it_count_nomem>0,1, 'last'));
         
         dlh = FranceschiRecursiveLasso; % Dynamic
-        dlh.stepsize_w = 3e-4;
-        dlh.stepsize_lambda = 1e-5;
+        dlh.stepsize_w = 1e-4;
+        dlh.stepsize_lambda = 1e-4;
         
+        niter_dynamic = 10000;
         [m_W_dynamic, v_lambda_dynamic] = obj.drill_dynamic( ...
-            dlh, A_train, y_train, 0.05, 10000);
+            dlh, A_train, y_train, 0, niter_dynamic);
+        
+        hl = OHO_Lasso;
+        hl.mirror_type = 'grad';
+        hl.b_online = 1;
+        hl.b_memory = 0;
+        hl.max_iter_outer= 10000;
+        hl.stepsize_policy = ConstantStepsize;
+        hl.tol_w = 1e-2;
+        hl.stepsize_policy.eta_0 = 1e-3;
+        hl.approx_type = 'hard';
+        [v_lambda_OHO, v_count_OHO] ...
+            = hl.solve_approx_mirror(A_train', y_train);
        
         disp 'Computing loo errors' 
-        [v_looLambdas, v_looErrors, loo_error_final_lambda] = ...
-            obj.compute_loo_curve(final_lambda_memory, kron( ...
-            [1 final_lambda_nomem/final_lambda_memory], linspace(0.9, 1.2, 3) ), ...
+        [v_looLambdas, v_looErrors, loo_error_final_lambda_nomem] = ...
+            obj.compute_loo_curve(final_lambda_nomem, linspace(...
+            0.35, ...1.1*final_lambda_nomem  -0.1*final_lambda_memory, ...
+            0.9, ...1.1*final_lambda_memory -0.1*final_lambda_nomem,  ...
+            21)./final_lambda_nomem, ...
             average_w, A_train, y_train);
         
         exp_no = obj.determine_experiment_number();
         %% Figures
         figure(exp_no*100+1); clf
-        obj.show_lambda_vs_ista_iterates({v_lambda_memory, v_lambda_nomem,v_lambda_dynamic},...
-            {v_it_count_memory, v_it_count_nomem, ones(size(v_lambda_dynamic))})                
-        legend({'With-memory', 'Memoryless'})
+        obj.show_lambda_vs_ista_iterates({v_lambda_memory, v_lambda_nomem,v_lambda_dynamic, v_lambda_OHO},...
+            {v_it_count_memory, v_it_count_nomem, ones(size(v_lambda_dynamic)), v_count_OHO})                
+        legend({'With-memory', 'Memoryless', 'Dynamic', 'OHO'})
         
         figure(exp_no*100+2); clf
         plot(v_looLambdas, v_looErrors)
         xlabel '\lambda'
         ylabel 'LOO error'
         hold on
-        plot(final_lambda_memory, loo_error_final_lambda, 'xr')
+        plot(final_lambda_nomem, loo_error_final_lambda_nomem, 'xr')
+
+        %% Save data
+        ch_resultsFile = sprintf('results_%s_%d', obj.ch_prefix, exp_no);
+        save(ch_resultsFile);
+        F = 0;
+    end
+    
+    % Online Gradient Descent
+    % With-memory, memoryless, dynamic, and OHO (old version)
+    % OHO fails.
+    % Using the dynamic solver when the number of samples is very small
+    % leads to a much smaller value of lambda.
+    function F = experiment_6(obj)
+        obj.n_train = 400;
+        obj.n_test = 400;
+        obj.seed = 10;
+        [A_train, y_train, ~, A_test, y_test] = obj.generate_pseudo_streaming_data();
+        
+        hgl_memory = HyperGradientLasso;
+        hgl_memory.b_online = 1;
+        hgl_memory.stepsize_lambda = 1e-4;
+        hgl_memory.tol_w = 1e-2;
+        hgl_memory.tol_g_lambda = 1e-4;
+        hgl_memory.max_iter_outer = 1000;
+        
+        hgl_no_mem = hgl_memory;
+        hgl_no_mem.max_iter_outer = 1000;
+        hgl_no_mem.stepsize_lambda = 1e-4;
+        hgl_no_mem.tol_w = 1e-3;
+        hgl_no_mem.b_memory = 0;
+        
+        [m_W_memory, v_lambda_memory, v_it_count_memory] = ...
+            hgl_memory.solve_gradient(A_train, y_train);
+        final_lambda_memory = v_lambda_memory(find(v_it_count_memory>0,1, 'last'));
+        average_w = mean(m_W_memory, 2);
+        
+        
+        [m_W_nomem, v_lambda_nomem, v_it_count_nomem] = ...
+            hgl_no_mem.solve_gradient(A_train, y_train);
+        final_lambda_nomem = v_lambda_nomem(find(v_it_count_nomem>0,1, 'last'));
+        
+        dlh = FranceschiRecursiveLasso; % Dynamic
+        dlh.stepsize_w = []; %! 1e-5;
+        dlh.stepsize_lambda = 1e-5;
+        
+        niter_dynamic = 100000;
+        [m_W_dynamic, v_lambda_dynamic] = obj.drill_dynamic( ...
+            dlh, A_test, y_test, 0, niter_dynamic);
+        
+        hl = OHO_Lasso;
+        hl.mirror_type = 'grad';
+        hl.b_online = 1;
+        hl.b_memory = 0;
+        hl.max_iter_outer= 2000;
+        hl.stepsize_policy = ConstantStepsize;
+        hl.tol_w = 1e-3;
+        hl.stepsize_policy.eta_0 = 3e-3;
+        hl.approx_type = 'hard';
+        [v_lambda_OHO, v_count_OHO] ...
+            = hl.solve_approx_mirror(A_train', y_train);
+       
+        disp 'Computing loo errors' 
+        [v_looLambdas, v_looErrors, loo_error_final_lambda_nomem] = ...
+            obj.compute_loo_curve(final_lambda_nomem, linspace(...
+            0.15, ...1.1*final_lambda_nomem  -0.1*final_lambda_memory, ...
+            0.5, ...1.1*final_lambda_memory -0.1*final_lambda_nomem,  ...
+            21)./final_lambda_nomem, ... %! 21
+            average_w, A_train, y_train);
+        
+        exp_no = obj.determine_experiment_number();
+        %% Figures
+        figure(exp_no*100+1); clf
+        obj.show_lambda_vs_ista_iterates({v_lambda_memory, v_lambda_nomem,v_lambda_dynamic, v_lambda_OHO},...
+            {v_it_count_memory, v_it_count_nomem, ones(size(v_lambda_dynamic)), v_count_OHO})                
+        legend({'With-memory', 'Memoryless', 'Dynamic', 'OHO'})
+        
+        figure(exp_no*100+2); clf
+        plot(v_looLambdas, v_looErrors)
+        xlabel '\lambda'
+        ylabel 'LOO error'
+        hold on
+        plot(final_lambda_nomem, loo_error_final_lambda_nomem, 'xr')
+        
 
         %% Save data
         ch_resultsFile = sprintf('results_%s_%d', obj.ch_prefix, exp_no);
@@ -341,6 +537,150 @@ methods % Experiments
         F = 0;
     end
 
+    % Online Gradient Descent
+    % Memoryless executed with very coarse tolerance.
+    % Number of samples increased to 5000, to see if it takes the
+    % memoryless to the optimal lambda
+    function F = experiment_7(obj)
+        obj.n_train = 5000;
+        obj.seed = 10;
+        [A_train, y_train] = obj.generate_pseudo_streaming_data();
+        
+        hgl_memory = HyperGradientLasso;
+        hgl_memory.b_online = 1;
+        hgl_memory.stepsize_lambda = 1e-5;
+        hgl_memory.tol_w = 1e-3;
+        hgl_memory.tol_g_lambda = 1e-4;
+        hgl_memory.max_iter_outer = 10000;
+        
+        hgl_no_mem = hgl_memory;
+        hgl_no_mem.max_iter_outer = 20000;
+        hgl_no_mem.stepsize_lambda = 3e-6;
+        hgl_no_mem.tol_w = 1e-3; % 1e-1 is too coarse. 1e-2 is ok.
+        hgl_no_mem.b_memory = 0;
+        hgl_no_mem.max_iter_inner = 1;
+        hgl_no_mem.param_c = 0;
+        
+        [m_W_memory, v_lambda_memory, v_it_count_memory] = ...
+            hgl_memory.solve_gradient(A_train, y_train);
+        final_lambda_memory = v_lambda_memory(find(v_it_count_memory>0,1, 'last'));
+        average_w = mean(m_W_memory, 2);
+              
+        [m_W_nomem, v_lambda_nomem, v_it_count_nomem] = ...
+            hgl_no_mem.solve_gradient(A_train, y_train);
+        final_lambda_nomem = v_lambda_nomem(find(v_it_count_nomem>0,1, 'last'));
+        
+        dlh = FranceschiRecursiveLasso; % Dynamic
+        dlh.stepsize_w = [];
+        dlh.stepsize_lambda = 1e-5;
+        
+        niter_dynamic = 50000;
+        [m_W_dynamic, v_lambda_dynamic] = obj.drill_dynamic( ...
+            dlh, A_train, y_train, 0, niter_dynamic); %#ok<ASGLU>
+        final_lambda_dynamic = v_lambda_dynamic(end);
+        v_it_count_dynamic = ones(1, length(v_lambda_dynamic));
+        
+%         hl = OHO_Lasso;
+%         hl.mirror_type = 'grad';
+%         hl.b_online = 1;
+%         hl.b_memory = 0;
+%         hl.max_iter_outer= 250;
+%         hl.stepsize_policy = ConstantStepsize;
+%         hl.tol_w = 1e0;
+%         hl.stepsize_policy.eta_0 = 1e-2;
+%         [v_lambda_OHO, v_it_count_OHO] ...
+%             = hl.solve_approx_mirror(A_train', y_train);
+       
+        disp 'Computing loo errors' 
+        lambda_0_loo = [final_lambda_nomem, final_lambda_memory, final_lambda_dynamic];
+        [v_looLambdas, v_looErrors, v_looError_lambda_0] = ...
+            obj.compute_loo_curve(lambda_0_loo,...
+            [], average_w, A_train, y_train, [0 1], 7);
+        
+        disp 'grid search over lambda for the dynamic setting'
+        v_avgLoss_dynamic = obj.grid_search_dynamic_lambda(dlh, ...
+            A_train, y_train, v_looLambdas, niter_dynamic);
+               
+        exp_no = obj.determine_experiment_number();
+        %% Figures
+        figure(exp_no*100+1); clf
+        obj.show_lambda_vs_ista_iterates({v_lambda_memory, v_lambda_nomem, v_lambda_dynamic},...
+            {v_it_count_memory, v_it_count_nomem, v_it_count_dynamic})                
+        legend({'With-memory', 'Memoryless', 'Dynamic'})
+        
+        figure(exp_no*100+2); clf
+        plot(v_looLambdas, v_looErrors)
+        xlabel '\lambda'
+        ylabel 'LOO error'
+        hold on
+        plot(lambda_0_loo, v_looError_lambda_0, 'xr')
+        plot(v_looLambdas, v_avgLoss_dynamic)
+        
+        %% Save data
+        ch_resultsFile = sprintf('results_%s_%d', obj.ch_prefix, exp_no);
+        save(ch_resultsFile);
+        F = 0;
+    end
+
+    % Online Gradient Descent
+    % Memoryless executed with different values of param_c
+    function F = experiment_8(obj)
+        obj.n_train = 500;
+        obj.seed = 10;
+        [A_train, y_train] = obj.generate_pseudo_streaming_data();
+        
+        n_grid_c = 5;
+        v_grid_c = zeros(1, n_grid_c);
+        v_grid_beta = logspace(-4, -3, n_grid_c);
+        c_lambda = cell(n_grid_c, 1);
+        c_it_count = c_lambda;
+        v_final_lambdas = zeros(1, n_grid_c);
+        
+        
+        hgl_no_mem = HyperGradientLasso;
+        hgl_no_mem.b_online = 1;        
+        hgl_no_mem.tol_g_lambda = 1e-4;
+        hgl_no_mem.max_iter_outer = 20000;
+        hgl_no_mem.tol_w = 1e-2; % 1e-1 is too coarse. 1e-2 is ok.
+        hgl_no_mem.b_memory = 0;
+        hgl_no_mem.max_iter_inner = 1;
+        
+        for k = 1:n_grid_c
+            hgl_no_mem.param_c = v_grid_c(k);
+            hgl_no_mem.stepsize_lambda = v_grid_beta(k);
+            [m_W, c_lambda{k}, c_it_count{k}] = ...
+                hgl_no_mem.solve_gradient(A_train, y_train);
+            v_final_lambdas(k) = c_lambda{k}(find(c_it_count{k}>0,1, 'last'));
+        end
+        average_w = mean(m_W, 2);
+       
+        disp 'Computing loo errors' 
+        [v_looLambdas, v_looErrors, v_looError_lambda_0] = ...
+            obj.compute_loo_curve(v_final_lambdas,...
+            [], average_w, A_train, y_train, [-0.2 1.2], 7);
+                       
+        exp_no = obj.determine_experiment_number();
+        %% Figures
+        figure(exp_no*100+1); clf
+        obj.show_lambda_vs_ista_iterates(c_lambda, c_it_count)   
+        c_legend = cell(n_grid_c, 1);
+        for k = 1:n_grid_c
+            c_legend{k} = sprintf('C = %g, \beta = %g', v_grid_c(k), v_grid_beta(k));
+        end
+        legend(c_legend)
+        
+        figure(exp_no*100+2); clf
+        plot(v_looLambdas, v_looErrors)
+        xlabel '\lambda'
+        ylabel 'LOO error'
+        hold on
+        plot(v_final_lambdas, v_looError_lambda_0, 'xr')
+        
+        %% Save data
+        ch_resultsFile = sprintf('results_%s_%d', obj.ch_prefix, exp_no);
+        save(ch_resultsFile);
+        F = 0;
+    end
 
 end
 
@@ -441,10 +781,21 @@ methods (Static) % Routines such as out-of-sample error calculations
         end
     end
     
-    function [v_looLambdas, v_looErrors, loo_error_lambda_0] = ...
-            compute_loo_curve(lambda_0, v_factors, v_w_in, m_X, v_y)
+    function [v_looLambdas, v_looErrors, v_looErrors_lambda_0] = ...
+            compute_loo_curve(v_lambda_0, v_factors, v_w_in, m_X, v_y, v_spread, n_factors)
         
-        v_looLambdas = lambda_0*sort([1 v_factors]);
+        if isempty(v_factors)
+            assert(length(v_spread)==2, ['if v_factors is empty, then '...
+                'a 6th argument v_spread of length 2 is required'])
+            assert(length(v_lambda_0)>1, ['if the v_spread is used, then'...
+                'length of v_lambda_0 should be larger than 1']);
+            my_top = max(v_lambda_0); my_bottom = min(v_lambda_0);
+            v_lambdas_sweep = linspace(my_bottom + v_spread(1)*(my_top-my_bottom), ...
+                my_bottom + v_spread(2)*(my_top-my_bottom), n_factors);
+        else
+            v_lambdas_sweep = mean(v_lambda_0)*v_factors;
+        end
+        v_looLambdas = sort(unique([v_lambda_0 v_lambdas_sweep]));
         
         st_hyperparams_loo = struct;
         for k =1:length(v_looLambdas)
@@ -453,8 +804,11 @@ methods (Static) % Routines such as out-of-sample error calculations
         
         v_looErrors = HyperGradientExperiments.compute_loo_errors(...
             st_hyperparams_loo, v_w_in, m_X, v_y);
-        ind_lambda_0 = find(v_looLambdas==lambda_0, 1,'first');
-        loo_error_lambda_0 = v_looErrors(ind_lambda_0);
+        v_looErrors_lambda_0 = zeros(size(v_lambda_0));
+        for k = 1:length(v_lambda_0)
+            ind_lambda_0 = find(v_looLambdas==v_lambda_0(k), 1,'first');
+            v_looErrors_lambda_0(k) = v_looErrors(ind_lambda_0);
+        end
     end
     
     function n = determine_experiment_number

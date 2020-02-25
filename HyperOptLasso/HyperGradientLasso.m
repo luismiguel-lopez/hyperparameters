@@ -9,13 +9,16 @@ properties
     tol_g_lambda
     
     max_iter_outer = 200;
-    max_iter_inner = 100;
+    max_iter_inner = 1000;
     min_iter_inner = 1;
     
     normalized_lambda_0 = 0.01;
     
     b_online = 0;
     b_memory = 1;
+    
+    param_c = 0; % We multiply the c variable (Jacobian of the validation 
+                 % cost with respect to w) by this parameter(factor)
     
 end
 
@@ -54,36 +57,38 @@ methods
         
         v_j = mod(0:obj.max_iter_outer-1, N)+1; % so the online is cyclic
         running_average_g = 0;
-        ltc = LoopTimeControl(obj.max_iter_outer); ltc.b_erase = 0;        
+        ltc = LoopTimeControl(obj.max_iter_outer); %ltc.b_erase = 0;        
         for k_outer = 2:obj.max_iter_outer
             sum_g = 0;
-            ltc_j = LoopTimeControl(N);
+            %ltc_j = LoopTimeControl(N);
             if obj.b_online,  v_indices_k = v_j(k_outer); 
             else,             v_indices_k = 1:N; 
             end
             v_it_count(k_outer) = 0;
             for j = v_indices_k
                 v_x_j = m_X(:, j);
-                if obj.b_memory
-                    v_w_j = sparse(m_W(:, j));
-                    v_c_j = sparse(m_C(:, j));
-                end
                 m_F_j = m_F - v_x_j*v_x_j'/N;
                 v_r_j = v_r - v_x_j*v_y(j)/N;
-                
-                [v_w_j, v_c_j, v_it_count_j] = obj.ista_fg(...
-                    v_w_j, m_F_j, v_r_j, v_lambda(k_outer-1), v_c_j);
-                
-                sum_g = sum_g - (v_y(j) - v_w_j'*v_x_j)*(v_x_j'*v_c_j);
-                if obj.b_memory
-                    m_W(:, j) = v_w_j;
-                    m_C(:, j) = v_c_j;
+                if obj.b_memory                    
+                    [v_w_j, v_c_j, v_it_count_j] = obj.ista_fg(...
+                        m_W(:, j), m_F_j, v_r_j, v_lambda(k_outer-1), m_C(:, j));
+                     m_W(:, j) = v_w_j;
+                     m_C(:, j) = v_c_j;
                 else
+%                     [v_w_j, v_c_j, v_it_count_j] = obj.ista_fg(...
+%                         v_w_j, m_F_j, v_r_j, v_lambda(k_outer-1), v_c_j);         
+%                     v_w_j = sparse(v_w_j);
+%                     v_c_j = sparse(v_c_j);
+                    
+                    [v_w_j, v_c_j, v_it_count_j] = obj.ista_fg(...
+                        v_w_j, m_F_j, v_r_j, v_lambda(k_outer-1), ...
+                        obj.param_c*v_c_j); %! something different from 0...
+                                %... to take advantage of the previous v_c_j?
                     v_w_j = sparse(v_w_j);
-                    v_c_j = sparse(v_c_j);
                 end
+                sum_g = sum_g - (v_y(j) - v_w_j'*v_x_j)*(v_x_j'*v_c_j);
                 v_it_count(k_outer) = v_it_count(k_outer) + v_it_count_j;
-                ltc_j.go(j);
+                %ltc_j.go(j);
             end
             mean_g = sum_g/length(v_indices_k);
             v_lambda(k_outer) = max(0,...
@@ -128,7 +133,7 @@ methods
             if       norm(v_grad_violations) < obj.tol_w   ...
                   && all(abs(v_grad).*(v_w==0) < lambda)   ...
                   && k_inner > obj.min_iter_inner
-                it_count = k_inner;
+                it_count = k_inner-1;
                 break;
             end
             
@@ -136,8 +141,9 @@ methods
             v_w = obj.soft_thresholding(v_w_f, alpha*lambda);
             v_z_argument = v_w_f/(alpha*lambda);
             v_z = (v_z_argument > 1) - (v_z_argument < -1);
-            v_c = v_z.^2.*(v_c - alpha*m_F*v_c) - alpha*v_z;
-            % we do not check convergence of v_c, not sure if  important
+            v_c = v_z.*(v_z.*(v_c-alpha*m_F*v_c)-alpha);
+            %v_c = (v_z.^2).*(v_c - alpha*m_F*v_c) - alpha*v_z;
+            % we do not check convergence of v_c, not sure if important
         end
     end
 end
