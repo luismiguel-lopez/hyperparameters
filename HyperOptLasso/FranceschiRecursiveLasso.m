@@ -7,6 +7,7 @@ properties
     stepsize_lambda
         
     forgettingFactor = 0.99;
+    b_use_next_c = 1;
         
 end
 
@@ -28,9 +29,15 @@ methods
         prediction_error = y_t - v_x_t'*v_w_t;
 
         loss_t = prediction_error.^2;
-        v_z_t = max(-1, min(1, v_wf_t./(alpha*lambda_t))); %soft
-        v_c_next = v_c_t - alpha*m_Phi_t*v_c_t - alpha*v_z_t;
-        grad_t = -prediction_error* v_x_t'*v_c_t;
+        z_argument = v_wf_t./(alpha*lambda_t);
+        v_z_t = (z_argument > 1) - (z_argument < -1); % exact gradient
+        %v_c_next = v_c_t - alpha*m_Phi_t*v_c_t - alpha*v_z_t;
+        v_c_next = v_z_t.*(v_z_t.*(v_c_t-alpha*m_Phi_t*v_c_t)-alpha);
+        if obj.b_use_next_c
+            grad_t = -prediction_error*v_x_t'*v_c_next;
+        else
+            grad_t = -prediction_error* v_x_t'*v_c_t;
+        end    
         lambda_next = max(0, lambda_t - beta*grad_t);
         v_wf_next = v_w_t - alpha*(m_Phi_next*v_w_t - v_r_next);
     end
