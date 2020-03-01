@@ -146,7 +146,7 @@ end
 methods % Experiments
             
     % Gradient descent, comparison with grid-search Leave one out
-    function F = experiment_1(obj)
+    function F = experiment_10(obj)
         obj.n_train = 200;
         [A_train, y_train] = obj.generate_pseudo_streaming_data();
         
@@ -185,9 +185,73 @@ methods % Experiments
         F = 0;
     end
     
+    % Hyper Subgradient Descent (HSGD) as described in the paper, 
+    % comparison with the code used in experiment 10
+    function F = experiment_11(obj)
+        obj.P = 100;        %! 20
+        obj.n_train = 200;  %! 40
+        obj.seed = 30;
+        [A_train, y_train] = obj.generate_pseudo_streaming_data();
+        
+        hgl = HyperGradientLasso;
+        hgl.stepsize_lambda = 1e-2;
+        hgl.momentum_lambda = 0.9;
+        hgl.tol_w = 1e-2;
+        hgl.tol_g_lambda = 1e-4;
+        hgl.max_iter_outer = 400;  %! 40
+        
+        hsgd = HyperSubGradientDescent;
+        hsgd.estimator = 'lasso';
+        hsgd.stepsize_lambda = 1e-2;
+        hsgd.momentum_lambda = 0.9;
+        hsgd.tol_w = 1e-2;
+        hsgd.tol_g_lambda = 1e-4;
+        hsgd.max_iter_outer = 400; %! 40,  100
+        
+        [m_W_paper, v_lambda_paper, v_it_count_paper] = ...
+            hsgd.solve_gradient(A_train, y_train);
+        [m_W, v_lambda, v_it_count] = ...
+            hgl.solve_gradient(A_train, y_train);
+        final_lambda = v_lambda(find(v_it_count>0,1, 'last'));
+        final_lambda_paper = v_lambda_paper(find(v_it_count_paper>0, 1, 'last'));
+        average_w = mean(m_W, 2);
+       
+        disp 'Computing loo errors' 
+        [v_looLambdas, v_looErrors, v_loo_error_final_lambda] = ...
+            obj.compute_loo_curve([final_lambda final_lambda_paper], ...
+            linspace(0.98, 1.02, 21), average_w, A_train, y_train);
+        
+        exp_no = obj.determine_experiment_number();
+        %% Figures
+        figure(exp_no*100+1); clf
+        obj.show_lambda_vs_ista_iterates({v_lambda, v_lambda_paper},...
+            {v_it_count, v_it_count_paper})                
+        legend({'Iterative', 'Inversion'})
+        
+        figure(exp_no*100+2); clf
+        plot(v_looLambdas, v_looErrors)
+        xlabel '\lambda'
+        ylabel 'LOO error'
+        hold on
+        plot([final_lambda final_lambda_paper], v_loo_error_final_lambda, 'xr')
+
+        %% Save data
+        ch_resultsFile = sprintf('results_%s_%d', obj.ch_prefix, exp_no);
+        save(ch_resultsFile);
+        F = 0;
+    end
+    
+    %%
+    % After experiment 11, I wrote and executed script_test_solve_z and
+    % concluded that in the offline HSGD the best iterative way to solve
+    % for z is to initialize in the previous z and do the "natural
+    % iterations" based on the fixed-point equation in the paper.
+
+    
+    %%
     % Gradient Descent vs Online Gradient Descent
     % GD vs OGD
-    function F = experiment_2(obj)
+    function F = experiment_20(obj)
         obj.n_train = 200;
         [A_train, y_train] = obj.generate_pseudo_streaming_data();
         
@@ -237,11 +301,227 @@ methods % Experiments
         save(ch_resultsFile);
         F = 0;
     end
+    
+    % Online Hyper Subgradient Descent (OHSGD) as described in the paper,
+    % comparison with the code used in experiment 20.
+    % Online HyperGradientLasso vs OHSGD
+    function F = experiment_21(obj)
+        obj.P = 100;
+        obj.n_train = 200;
+        obj.seed = 4;
+        [A_train, y_train] = obj.generate_pseudo_streaming_data();
+        
+        my_tol_w = 1e-3;
+        my_tol_g = 0;
+        
+        %%
+        hsgd = HyperSubGradientDescent;
+        hsgd.estimator = 'lasso';
+        hsgd.tol_w = my_tol_w;
+        hsgd.tol_g_lambda = my_tol_g;
 
+        ohsgd = hsgd;
+        ohsgd.b_online = 1;
+        ohsgd.stepsize_lambda = 3e-4;
+        ohsgd.momentum_lambda = 0.9;
+        ohsgd.max_iter_outer = 10000;
+        
+        %%
+        hgl_offline = HyperGradientLasso;
+        hgl_offline.tol_w = my_tol_w;
+        hgl_offline.tol_g_lambda = my_tol_g;
+
+        hgl_online = hgl_offline;
+        hgl_online.b_online = 1;
+        hgl_online.stepsize_lambda = 3e-4;
+        hgl_online.momentum_lambda = 0.9;
+        hgl_online.max_iter_outer = 10000;
+        
+        %%        
+        [m_W_ohsgd, v_lambda_ohsgd, v_it_count_ohsgd] = ohsgd.solve_gradient(A_train, y_train);
+        final_lambda_ohsgd = v_lambda_ohsgd(find(v_it_count_ohsgd>0,1, 'last'));
+        average_w = mean(m_W_ohsgd, 2);
+              
+        [m_W_ohgl, v_lambda_ohgl, v_it_count_ohgl] = ...
+            hgl_online.solve_gradient(A_train, y_train);
+        final_lambda_ohgl = v_lambda_ohgl(find(v_it_count_ohgl>0,1, 'last'));
+        
+        v_the_final_lambdas = [final_lambda_ohsgd final_lambda_ohgl];
+        
+        %%        
+        disp 'Computing loo errors' 
+        [v_looLambdas, v_looErrors, v_loo_error_final_lambdas] = obj.compute_loo_curve(...
+            v_the_final_lambdas, linspace(0.4, 2.5, 21), ...
+            average_w, A_train, y_train);
+        
+        exp_no = obj.determine_experiment_number();
+        %% Figures
+        figure(exp_no*100+1); clf
+        obj.show_lambda_vs_ista_iterates({v_lambda_ohsgd, v_lambda_ohgl},...
+            {v_it_count_ohsgd, v_it_count_ohgl})                
+        legend({'OHSGD(paper)', 'Ohgl (previous ver)'})
+        
+        figure(exp_no*100+2); clf
+        plot(v_looLambdas, v_looErrors)
+        xlabel '\lambda'
+        ylabel 'LOO error'
+        hold on
+        plot(v_the_final_lambdas, v_loo_error_final_lambdas, 'xr')
+
+        %% Save data
+        ch_resultsFile = sprintf('results_%s_%d', obj.ch_prefix, exp_no);
+        save(ch_resultsFile);
+        F = 0;
+    end
+
+    % This one is only to make sure that HyperSubGradientDescent with 
+    % property method_Z set to 'iterate' does the same as
+    % HyperGradientLasso
+    function F = experiment_22(obj)
+        obj.P = 100;
+        obj.n_train = 200;
+        obj.seed = 4;
+        [A_train, y_train] = obj.generate_pseudo_streaming_data();
+        
+        my_tol_w = 1e-3;
+        my_tol_g = 0;
+        
+        %%
+        hsgd = HyperSubGradientDescent;
+        hsgd.estimator = 'lasso';
+        hsgd.tol_w = my_tol_w;
+        hsgd.tol_g_lambda = my_tol_g;
+
+        ohsgd = hsgd;
+        ohsgd.b_online = 1;
+        ohsgd.stepsize_lambda = 3e-4;
+        ohsgd.momentum_lambda = 0.9;
+        ohsgd.max_iter_outer = 10000;
+        
+        ohsgd.method_Z = 'iterate';
+        
+        %%
+        hgl_offline = HyperGradientLasso;
+        hgl_offline.tol_w = my_tol_w;
+        hgl_offline.tol_g_lambda = my_tol_g;
+
+        hgl_online = hgl_offline;
+        hgl_online.b_online = 1;
+        hgl_online.stepsize_lambda = 3e-4;
+        hgl_online.momentum_lambda = 0.9;
+        hgl_online.max_iter_outer = 10000;
+        
+        %%        
+        [m_W_ohsgd, v_lambda_ohsgd, v_it_count_ohsgd] = ohsgd.solve_gradient(A_train, y_train);
+        final_lambda_ohsgd = v_lambda_ohsgd(find(v_it_count_ohsgd>0,1, 'last'));
+        average_w = mean(m_W_ohsgd, 2);
+              
+        [m_W_ohgl, v_lambda_ohgl, v_it_count_ohgl] = ...
+            hgl_online.solve_gradient(A_train, y_train);
+        final_lambda_ohgl = v_lambda_ohgl(find(v_it_count_ohgl>0,1, 'last'));
+        
+        v_the_final_lambdas = [final_lambda_ohsgd final_lambda_ohgl];
+        
+        %%        
+        disp 'Computing loo errors' 
+        [v_looLambdas, v_looErrors, v_loo_error_final_lambdas] = obj.compute_loo_curve(...
+            v_the_final_lambdas, linspace(0.4, 2.5, 21), ...
+            average_w, A_train, y_train);
+        
+        exp_no = obj.determine_experiment_number();
+        %% Figures
+        figure(exp_no*100+1); clf
+        obj.show_lambda_vs_ista_iterates({v_lambda_ohsgd, v_lambda_ohgl},...
+            {v_it_count_ohsgd, v_it_count_ohgl})                
+        legend({'OHSGD(paper)', 'Ohgl (previous ver)'})
+        
+        figure(exp_no*100+2); clf
+        plot(v_looLambdas, v_looErrors)
+        xlabel '\lambda'
+        ylabel 'LOO error'
+        hold on
+        plot(v_the_final_lambdas, v_loo_error_final_lambdas, 'xr')
+
+        %% Save data
+        ch_resultsFile = sprintf('results_%s_%d', obj.ch_prefix, exp_no);
+        save(ch_resultsFile);
+        F = 0;
+    end
+
+    % This function compares 4 options of HSGD: 
+    % Offline, iterative computation of m_Z
+    % Online,  iterative computation of m_Z
+    % Offline, compute m_Z by linsolve
+    % Online,  compute m_Z by linsolve
+    function F = experiment_23(obj)
+        obj.P = 100;
+        obj.n_train = 110;
+        obj.seed = 4;
+        [A_train, y_train] = obj.generate_pseudo_streaming_data();
+        
+        my_tol_w    = 1e-3;
+        my_tol_g    = 0;
+        my_beta     = 1e-3;
+        my_momentum = 0.9;
+        
+        %%
+        hsgd_it = HyperSubGradientDescent;
+        hsgd_it.estimator = 'lasso';
+        hsgd_it.tol_w = my_tol_w;
+        hsgd_it.tol_g_lambda = my_tol_g;
+        hsgd_it.stepsize_lambda = my_beta;
+        hsgd_it.momentum_lambda = my_momentum;
+        hsgd_it.method_Z = 'iterate';
+
+        ohsgd_it = hsgd_it;
+        ohsgd_it.b_online = 1;
+        ohsgd_it.max_iter_outer = 10000;
+        ohsgd_it.stepsize_lambda = my_beta/sqrt(obj.P);
+        
+        hsgd_lin  = hsgd_it;   hsgd_lin.method_Z = 'linsolve';
+        ohsgd_lin = ohsgd_it; ohsgd_lin.method_Z = 'linsolve';
+        
+        c_estimators = { hsgd_lin, ohsgd_lin, hsgd_it, ohsgd_it};
+                       
+        %%
+        for k = 1:length(c_estimators)
+            [c_W{k}, c_lambda{k}, c_it_count{k}] = c_estimators{k}.solve_gradient(A_train, y_train);
+            m_final_lambda(:, k) = c_lambda{k}(find(c_it_count{k}>0,1, 'last'));
+            m_average_w(:,k) = mean(c_W{k}, 2);
+        end
+        
+        %%        
+        disp 'Computing loo errors' 
+        [v_looLambdas, v_looErrors, v_loo_error_final_lambdas] = obj.compute_loo_curve(...
+            m_final_lambda, linspace(0.4, 2.5, 21), ...
+            mean(m_average_w, 2), A_train, y_train);
+        
+        exp_no = obj.determine_experiment_number();
+        %% Figures
+        c_legend = {'Offline, linsolve Z', 'Online, linsolve Z', ...
+            'Offline, iterative Z', 'Online, iterative Z'};
+        
+        figure(exp_no*100+1); clf
+        obj.show_lambda_vs_ista_iterates(c_lambda, c_it_count);
+        legend(c_legend)
+        
+        figure(exp_no*100+2); clf
+        plot(v_looLambdas, v_looErrors)
+        xlabel '\lambda'
+        ylabel 'LOO error'
+        hold on
+        plot(m_final_lambda, v_loo_error_final_lambdas, 'xr')
+
+        %% Save data
+        ch_resultsFile = sprintf('results_%s_%d', obj.ch_prefix, exp_no);
+        save(ch_resultsFile);
+        F = 0;
+    end
+    
     % Online Gradient Descent
     % Comparing effect of different tolerances of ISTA
     % (inexact approximation -- with memory)
-    function F = experiment_3(obj)
+    function F = experiment_30(obj)
         obj.n_train = 200;
         [A_train, y_train] = obj.generate_pseudo_streaming_data();
         
@@ -295,6 +575,98 @@ methods % Experiments
         save(ch_resultsFile);
         F = 0;
     end
+    
+    % Online Hyper Subgradient Descent
+    % linsolve vs. iterative Z
+    % This experiment combines 23 and 30:
+    % We compare the effect of different tolerances of ISTA
+    % (inexact approximation -- with memory)
+    function F = experiment_33(obj)
+        obj.P = 100;
+        obj.n_train = 90;
+        obj.seed = 4;
+        [A_train, y_train] = obj.generate_pseudo_streaming_data();
+        
+        my_tol_w    = 1e-3;
+        my_tol_g    = 0;
+        my_beta     = 1e-4;
+        my_momentum = 0.9;
+        
+        %%
+        hsgd_it = HyperSubGradientDescent;
+        hsgd_it.estimator = 'lasso';
+        hsgd_it.tol_w = my_tol_w;
+        hsgd_it.tol_g_lambda = my_tol_g;
+        hsgd_it.stepsize_lambda = my_beta;
+        hsgd_it.momentum_lambda = my_momentum;
+        hsgd_it.method_Z = 'iterate';
+
+        ohsgd_it = hsgd_it;
+        ohsgd_it.b_online = 1;
+        ohsgd_it.max_iter_outer = 10000; %! 1000
+        
+        hsgd_lin  = hsgd_it;   hsgd_lin.method_Z = 'linsolve';
+        ohsgd_lin = ohsgd_it; ohsgd_lin.method_Z = 'linsolve';
+        
+        c_estimators = {ohsgd_lin,  ohsgd_it};
+        n_estimators = length(c_estimators);
+        
+        n_tol = 7;
+        v_tolerances = logspace(-3, 0, n_tol);
+        
+        m_betas = my_beta*ones(n_tol, n_estimators);
+        m_betas(:, 1) = m_betas(:,1)/7;
+                       
+        %%
+        t_average_w = zeros(obj.P, n_estimators, n_tol);
+        for k_e = 1:n_estimators
+            for k_t = 1:n_tol
+                estimator_now = c_estimators{k_e};
+                estimator_now.tol_w = v_tolerances(k_t);
+                estimator_now.stepsize_lambda = m_betas(k_t, k_e);
+                [c_W{k_t, k_e}, c_lambda{k_t, k_e}, c_it_count{k_t, k_e}] = ...
+                    estimator_now.solve_gradient(A_train, y_train);
+                    t_final_lambda(:, k_t, k_e) = c_lambda{k_t, k_e}(find(c_it_count{k_t, k_e}>0,1, 'last'));
+                    t_average_w(:,k_t, k_e) = mean(c_W{k_t, k_e}, 2);
+            end
+        end
+        m_final_lambda = reshape(t_final_lambda, size(t_final_lambda, 1), ...
+            numel(t_final_lambda)/ size(t_final_lambda, 1));
+        
+        %%        
+        disp 'Computing loo errors' 
+        [v_looLambdas, v_looErrors, v_loo_error_final_lambdas] = obj.compute_loo_curve(...
+            m_final_lambda, linspace(0.4, 2.5, 21), ...
+            mean(mean(t_average_w, 2), 3), A_train, y_train);
+        
+        exp_no = obj.determine_experiment_number();
+        %% Figures
+        c_legend = cell(n_tol, 2);
+        for k_e = 1:numel(c_estimators)
+            for k_t = 1:n_tol
+                c_legend{k_t, k_e} = sprintf('tol = %g', v_tolerances(k_t));
+            end
+        end
+        c_legend{1}     = [c_legend{1}, ', linsolve'];
+        c_legend{k_t+1} = [c_legend{k_t+1}, ', iterative'];
+        
+        figure(exp_no*100+1); clf
+        obj.show_lambda_vs_ista_iterates(vec(c_lambda), vec(c_it_count));
+        legend(c_legend(:))
+        
+        figure(exp_no*100+2); clf
+        plot(v_looLambdas, v_looErrors)
+        xlabel '\lambda'
+        ylabel 'LOO error'
+        hold on
+        plot(m_final_lambda, v_loo_error_final_lambdas, 'xr')
+
+        %% Save data
+        ch_resultsFile = sprintf('results_%s_%d', obj.ch_prefix, exp_no);
+        save(ch_resultsFile);
+        F = 0;
+    end
+
    
     % Online Gradient Descent
     % With-memory, memoryless, and OHO (old

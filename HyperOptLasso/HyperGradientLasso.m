@@ -4,6 +4,7 @@ classdef HyperGradientLasso
 properties
     stepsize_w
     stepsize_lambda = 1e-3;
+    momentum_lambda = 0; %! 1e-5
     
     tol_w
     tol_g_lambda
@@ -32,11 +33,12 @@ methods
         v_r = m_X*v_y(:)/N;
         
         if isempty(obj.stepsize_w)
-            obj.stepsize_w = 1/trace(m_F);
+            obj.stepsize_w = 1/(2*eigs(m_F,1));
         end
         
         v_it_count  = nan(1, obj.max_iter_outer);
         v_lambda    = nan(1, obj.max_iter_outer);
+        v_velocity  = zeros(1, obj.max_iter_outer);
         try
             v_lambda(1) = lambda_0;
         catch ME %#ok<NASGU>
@@ -57,7 +59,7 @@ methods
         
         v_j = mod(0:obj.max_iter_outer-1, N)+1; % so the online is cyclic
         running_average_g = 0;
-        ltc = LoopTimeControl(obj.max_iter_outer); %ltc.b_erase = 0;        
+        ltc = LoopTimeControl(obj.max_iter_outer); %ltc.b_erase = 0;    
         for k_outer = 2:obj.max_iter_outer
             sum_g = 0;
             %ltc_j = LoopTimeControl(N);
@@ -91,8 +93,10 @@ methods
                 %ltc_j.go(j);
             end
             mean_g = sum_g/length(v_indices_k);
+            v_velocity(k_outer) = ...
+                obj.momentum_lambda*v_velocity(k_outer-1) + (1-obj.momentum_lambda)*mean_g;
             v_lambda(k_outer) = max(0,...
-                v_lambda(k_outer-1) - obj.stepsize_lambda*mean_g);
+                v_lambda(k_outer-1) - obj.stepsize_lambda*v_velocity(k_outer));
             
             if ~obj.b_online
                 b_stopping_criterion = all(abs(mean_g)<obj.tol_g_lambda);
@@ -119,17 +123,21 @@ methods
     end
     
     function [v_w, v_c, it_count] = ista_fg(obj, ...
-            v_w, m_F, v_r, lambda, v_c)
+            v_w, m_F, v_r, lambda, v_c, b_debug)
         % Iterative soft thresholding algorithm (ISTA)
         % and Franceschi's forward gradient 
         
         alpha = obj.stepsize_w;
         it_count = obj.max_iter_inner;
+        
+        if not(exist('b_debug', 'var')), b_debug = 0; end
+        v_norms_violations = zeros(1, obj.max_iter_inner);
         for k_inner = 1:obj.max_iter_inner
             v_grad = m_F*v_w - v_r; % gradient
             
             %check stopping criterion
             v_grad_violations = (v_grad.*sign(v_w) + lambda).*(v_w~=0);
+            v_norms_violations(k_inner) = norm(v_grad_violations); %debug
             if       norm(v_grad_violations) < obj.tol_w   ...
                   && all(abs(v_grad).*(v_w==0) < lambda)   ...
                   && k_inner > obj.min_iter_inner
@@ -144,6 +152,11 @@ methods
             v_c = v_z.*(v_z.*(v_c-alpha*m_F*v_c)-alpha);
             %v_c = (v_z.^2).*(v_c - alpha*m_F*v_c) - alpha*v_z;
             % we do not check convergence of v_c, not sure if important
+        end
+        if b_debug
+            figure(999); clf; %debug
+            plot(v_norms_violations); %debug
+            pause
         end
     end
 end
