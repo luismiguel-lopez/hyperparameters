@@ -666,6 +666,238 @@ methods % Experiments
         save(ch_resultsFile);
         F = 0;
     end
+    
+    % Online Hyper Subgradient Descent
+    % linsolve vs. iterative Z
+    % %commented code is used to determine best stepsize beta
+    % We compare the effect of different tolerances of ISTA
+    % (inexact approximation -- with memory)
+    function F = experiment_34(obj)
+        obj.P = 100;
+        obj.n_train = 200;
+        obj.seed = 5;
+        [A_train, y_train] = obj.generate_pseudo_streaming_data();
+        
+        my_tol_w    = 1e-3;
+        my_tol_g    = 0;
+        my_beta     = 1e-4/7;
+        my_momentum = 0.9;
+        
+        %%
+        hsgd_it = HyperSubGradientDescent;
+        hsgd_it.estimator = 'lasso';
+        hsgd_it.tol_w = my_tol_w;
+        hsgd_it.tol_g_lambda = my_tol_g;
+        hsgd_it.stepsize_lambda = my_beta;
+        hsgd_it.momentum_lambda = my_momentum;
+        hsgd_it.method_Z = 'iterate';
+
+        ohsgd_it = hsgd_it;
+        ohsgd_it.b_online = 1;
+        ohsgd_it.max_iter_outer = 1000; %! 10000
+        
+        hsgd_lin  = hsgd_it;   hsgd_lin.method_Z = 'linsolve';
+        ohsgd_lin = ohsgd_it; ohsgd_lin.method_Z = 'linsolve';
+        
+        c_estimators = {ohsgd_lin,  ohsgd_it};
+        n_estimators = length(c_estimators);
+        
+        n_tol = 7;
+        v_tolerances = logspace(-4,  -1, n_tol);
+        v_betas      = logspace(-5,  -3, n_tol);
+        
+        %v_tolerances(:) = 1e-2;
+        v_betas(:) = 6e-5;
+                       
+        %%
+        t_average_w = zeros(obj.P, n_tol, n_estimators);
+        t_final_lambda = zeros(1, n_tol, n_estimators);
+        for k_e = 1:n_estimators
+            for k_t = 1:n_tol
+                estimator_now = c_estimators{k_e};
+                estimator_now.tol_w = v_tolerances(k_t);
+                estimator_now.stepsize_lambda = v_betas(k_t);
+                [c_W{k_t, k_e}, c_lambda{k_t, k_e}, c_it_count{k_t, k_e}] = ...
+                    estimator_now.solve_gradient(A_train, y_train);
+                t_final_lambda(:, k_t, k_e) = mean( ...
+                    c_lambda{k_t, k_e}(find(c_it_count{k_t, k_e}>0,1, 'last')), 2);
+                t_average_w(:,k_t, k_e) = mean(c_W{k_t, k_e}, 2);
+            end
+        end
+        m_final_lambda = reshape(t_final_lambda, size(t_final_lambda, 1), ...
+            numel(t_final_lambda)/ size(t_final_lambda, 1));
+        
+        %%        
+        disp 'Computing loo errors' 
+        [v_looLambdas, v_looErrors, v_loo_error_final_lambdas] = obj.compute_loo_curve(...
+            m_final_lambda, linspace(0.4, 2.5, 21), ...
+            mean(mean(t_average_w, 2), 3), A_train, y_train);
+        
+        exp_no = obj.determine_experiment_number();
+        %% Figures
+        c_legend = cell(n_tol, 2);
+        for k_e = 1:numel(c_estimators)
+            for k_t = 1:n_tol
+                c_legend{k_t, k_e} = sprintf('tol = %g, \\beta = %g', ...
+                    v_tolerances(k_t), v_betas(k_t));
+            end
+        end
+        c_legend{1}     = [c_legend{1}, ', linsolve'];
+        c_legend{k_t+1} = [c_legend{k_t+1}, ', iterative'];
+        
+        figure(exp_no*100+1); clf
+        obj.show_lambda_vs_ista_iterates(vec(c_lambda), vec(c_it_count));
+        legend(c_legend(:))
+        
+        figure(exp_no*100+2); clf
+        plot(v_looLambdas, v_looErrors)
+        xlabel '\lambda'
+        ylabel 'LOO error'
+        hold on
+        plot(m_final_lambda, v_loo_error_final_lambdas, 'xr')
+        
+        figure(exp_no*100+3); clf
+        filter_length = obj.n_train;
+        for k_e = 1:numel(c_estimators)
+            for k_t = 1:n_tol
+                plot(cumsum(c_it_count{k_t,k_e}), filter(...
+                    ones(1, filter_length), filter_length, c_lambda{k_t, k_e}))
+                hold on
+            end
+        end
+        legend(c_legend(:))
+
+        %% Save data
+        ch_resultsFile = sprintf('results_%s_%d', obj.ch_prefix, exp_no);
+        save(ch_resultsFile);
+        F = 0;
+    end
+
+    % Online Hyper Subgradient Descent
+    % Linsolve
+    % We compare the effect of different tolerances of ISTA
+    % (inexact approximation -- with memory)
+    % same as 34 but larger P, more samples
+    function F = experiment_35(obj)
+        obj.P = 200;
+        obj.n_train = 400;
+        obj.seed = 5;
+        [A_train, y_train, ~, A_test, y_test] = obj.generate_pseudo_streaming_data();
+        
+        my_tol_w    = 1e-3;
+        my_tol_g    = 0;
+        my_beta     = 1e-4/7;
+        my_momentum = 0.9;
+        
+        %%
+        hsgd_it = HyperSubGradientDescent;
+        hsgd_it.estimator = 'lasso';
+        hsgd_it.tol_w = my_tol_w;
+        hsgd_it.tol_g_lambda = my_tol_g;
+        hsgd_it.stepsize_lambda = my_beta;
+        hsgd_it.momentum_lambda = my_momentum;
+        hsgd_it.method_Z = 'iterate';
+
+        ohsgd_it = hsgd_it;
+        ohsgd_it.b_online = 1;
+        ohsgd_it.max_iter_outer = 10000; 
+        
+        hsgd_lin  = hsgd_it;   hsgd_lin.method_Z = 'linsolve';
+        ohsgd_lin = ohsgd_it; ohsgd_lin.method_Z = 'linsolve';
+        
+        c_estimators = {ohsgd_lin};
+        n_estimators = length(c_estimators);
+        
+        n_tol = 7;
+        v_tolerances = logspace(-4,  -1, n_tol);
+        v_betas      = logspace(-5,  -3, n_tol);
+        
+        %v_tolerances(:) = 1e-2;
+        v_betas(:) = 6e-5;
+                       
+        %%
+        t_average_w = zeros(obj.P, n_tol, n_estimators);
+        t_final_lambda = zeros(1, n_tol, n_estimators);
+        for k_e = 1:n_estimators
+            for k_t = 1:n_tol
+                estimator_now = c_estimators{k_e};
+                estimator_now.tol_w = v_tolerances(k_t);
+                estimator_now.stepsize_lambda = v_betas(k_t);
+                [c_W{k_t, k_e}, c_lambda{k_t, k_e}, c_it_count{k_t, k_e}] = ...
+                    estimator_now.solve_gradient(A_train, y_train);
+                t_final_lambda(:, k_t, k_e) = mean( ...
+                    c_lambda{k_t, k_e}(find(c_it_count{k_t, k_e}>0,1, 'last')), 2);
+                t_average_w(:,k_t, k_e) = mean(c_W{k_t, k_e}, 2);
+            end
+        end
+        m_final_lambda = reshape(t_final_lambda, size(t_final_lambda, 1), ...
+            numel(t_final_lambda)/ size(t_final_lambda, 1));
+        
+        c_lambda_filtered = cell(size(c_lambda));
+        filter_length = obj.n_train;
+        for k =1:numel(c_lambda)
+            c_lambda_filtered{k} = filter(ones(1, filter_length), ...
+                filter_length, c_lambda{k});
+        end
+            
+        
+        
+        %%        
+        disp 'Computing loo errors' 
+        [v_looLambdas, v_looErrors, v_loo_error_final_lambdas, st_hyperparams] = ...
+            obj.compute_loo_curve(...
+            m_final_lambda, linspace(0.4, 2.5, 21), ...
+            mean(mean(t_average_w, 2), 3), A_train, y_train);
+        %
+        disp 'Computing test errors'
+        v_test_errors = obj.heldOut_validation_errors(A_train, y_train,...
+            A_test, y_test, st_hyperparams, mean(mean(t_average_w, 2), 3));
+
+        exp_no = obj.determine_experiment_number();
+        %% Figures
+        c_legend = cell(n_tol, n_estimators);
+        for k_e = 1:n_estimators
+            for k_t = 1:n_tol
+                c_legend{k_t, k_e} = sprintf('tol = %g', ...
+                    v_tolerances(k_t));
+            end
+        end
+        c_legend{1}     = [c_legend{1}]; %, ', linsolve'];
+        %c_legend{k_t+1} = [c_legend{k_t+1}, ', iterative'];
+        
+        figure(exp_no*100+1); clf
+            obj.show_lambda_vs_ista_iterates(vec(c_lambda), vec(c_it_count));
+            legend(c_legend(:))
+        
+        figure(exp_no*100+2); clf
+            plot(v_looLambdas, v_looErrors)
+            xlabel '\lambda'
+            ylabel 'Validation error'
+            hold on
+            plot(m_final_lambda, v_loo_error_final_lambdas, 'xr')
+            plot(v_looLambdas, v_test_errors, 'm')
+            legend('Leave-one-out', 'HSGD','Test')
+        
+        figure(exp_no*100+3); clf
+            filter_length = obj.n_train;
+            for k_e = 1:numel(c_estimators)
+                for k_t = 1:n_tol
+                    plot(cumsum(c_it_count{k_t,k_e}), filter(...
+                        ones(1, filter_length), filter_length, c_lambda{k_t, k_e}))
+                    hold on
+                end
+            end
+            legend(c_legend(:))
+        
+        figure(exp_no*100+4); clf
+            obj.show_lambda_vs_ista_iterates(vec(c_lambda_filtered), vec(c_it_count));
+            legend(c_legend(:))
+            
+        %% Save data
+        ch_resultsFile = sprintf('results_%s_%d', obj.ch_prefix, exp_no);
+        save(ch_resultsFile);
+        F = 0;
+    end
 
    
     % Online Gradient Descent
@@ -1098,21 +1330,21 @@ methods (Static) % Routines such as out-of-sample error calculations
     
     function v_oos_errors = heldOut_validation_errors(m_X_train, v_y_train,...
             m_X_test, v_y_test, st_hyperparams, v_w_0)
-        N = length(v_y_train); assert(size(m_X_train, 1)==N);
-        P = size(m_X_train, 2);
+        N = length(v_y_train); assert(size(m_X_train, 2)==N);
+        P = size(m_X_train, 1);
         v_oos_errors = nan(length(st_hyperparams), 1);
         for k = 1:length(st_hyperparams)
             if isfield(st_hyperparams(k) ,'rho')
-                m_Phi = m_X_train'*m_X_train/N + st_hyperparams(k).rho*eye(P);
+                m_Phi = m_X_train*m_X_train'/N + st_hyperparams(k).rho*eye(P);
             else
-                m_Phi = m_X_train'*m_X_train/N;
+                m_Phi = m_X_train*m_X_train'/N;
             end
-            v_r = m_X_train'*v_y_train/N;
+            v_r = m_X_train*v_y_train(:)/N;
             my_alpha = 10/trace(m_Phi);
             hl = OHO_Lasso;
             hl.tol_w = 1e-3;
             v_w_0 = hl.ista(v_w_0, m_Phi, v_r, my_alpha, st_hyperparams(k).lambda);
-            v_oos_errors(k) = mean((v_y_test - m_X_test*v_w_0).^2)./mean(v_y_test.^2);
+            v_oos_errors(k) = mean((v_y_test(:) - m_X_test'*v_w_0).^2)./mean(v_y_test.^2);
         end
     end
         
@@ -1153,7 +1385,7 @@ methods (Static) % Routines such as out-of-sample error calculations
         end
     end
     
-    function [v_looLambdas, v_looErrors, v_looErrors_lambda_0] = ...
+    function [v_looLambdas, v_looErrors, v_looErrors_lambda_0, st_hyperparams_loo] = ...
             compute_loo_curve(v_lambda_0, v_factors, v_w_in, m_X, v_y, v_spread, n_factors)
         
         if isempty(v_factors)

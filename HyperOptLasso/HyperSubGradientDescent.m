@@ -105,7 +105,7 @@ methods
                         [m_A_tilde, m_B_tilde] = obj.compute_subderivatives(...
                             v_w_f_j, v_lambda(k_outer-1));
                         m_toInvert = (eye(P)-m_A_tilde*(eye(P)-obj.stepsize_w*m_F_j));
-                        if N>P^1.5
+                        if N>P^1.15
                             m_Z_now = m_toInvert\m_B_tilde;
                         else
                             m_Z_now = lsqminnorm(m_toInvert, m_B_tilde);
@@ -188,13 +188,18 @@ methods
             v_w_f = v_w - alpha*(v_grad);
             v_w = obj.soft_thresholding(v_w_f, alpha*lambda);
             
-            %% This section corresponds to the 
-            v_b_argument = v_w_f./(alpha*lambda);
-            v_b = (v_b_argument > 1) - (v_b_argument < -1);
-            v_z = v_b.*(v_b.*(v_z-alpha*m_F*v_z)-alpha);
-            % v_z = (v_b.^2).*(v_z - alpha*m_F*v_z) - alpha*v_b;
-            % we do not check convergence of v_z when we use the 'iterate'
-            % method
+            switch obj.method_Z % computation of the hypergradient
+                case 'iterate'
+                    v_b_argument = v_w_f./(alpha*lambda);
+                    v_b = (v_b_argument > 1) - (v_b_argument < -1);
+                    v_z = v_b.*(v_b.*(v_z-alpha*m_F*v_z)-alpha);
+                    % v_z = (v_b.^2).*(v_z - alpha*m_F*v_z) - alpha*v_b;
+                    % we do not check convergence of v_z when we use the
+                    % 'iterate' method
+                case 'linsolve'
+                    v_z = zeros(size(v_w)); %it is computed afterwards
+                otherwise, error 'unrecognized option for method_Z'
+            end
             
             % TODO: split the 'iterate' method for z into two:
             % a) 'interleave' 
