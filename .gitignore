@@ -1,2 +1,4 @@
 
 HyperOptLasso/Figures/TooHeavyForGitHub/*
+*.m~
+*.asv
