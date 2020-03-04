@@ -41,22 +41,12 @@ methods % Constructor and data-generating procedures
         v_y_test      = obj.generate_y_data(m_X_test, v_true_w);
     end
     
-    function validateGroupStructure(~, v_groups)
-        assert(all(v_groups==abs(round(v_groups))), ...
-            'All entries in v_group_structure must be natural numbers')
-        assert(min(v_groups)==1, 'Group labels must start by 1')
-        for gr = 1:max(v_groups)
-            assert(sum(v_groups==gr)>0, ...
-                'Groups must be labeled with consecutive numbers')
-        end
-    end
-    
     function [m_X, v_y, v_true_w, m_X_test, v_y_test, v_group_structure] ...
             = generate_pseudo_streaming_data_grouped(obj, n_groups)
         %create train and test data
         rng(obj.seed);
         v_group_structure = ceil(linspace(eps, n_groups, obj.P));
-        obj.validateGroupStructure(v_group_structure);
+        validateGroupStructure(v_group_structure);
         v_active_groups = double(rand(n_groups, 1) < obj.sparsity);
         v_true_w        = v_active_groups(v_group_structure); % group-sparse coefs
         m_X           = randn(obj.P, obj.T); % time series of x vectors
@@ -67,7 +57,7 @@ methods % Constructor and data-generating procedures
     end
     
     function m_X = generate_colinear_X(obj, v_group_structure)
-        obj.validateGroupStructure(v_group_structure);
+        validateGroupStructure(v_group_structure);
         n_blocks = max(v_group_structure);
         c_blocks = cell(n_blocks, 1);
         for b = 1:n_blocks
@@ -87,7 +77,7 @@ methods % Constructor and data-generating procedures
         %create train and test data
         rng(obj.seed);
         v_group_structure = ceil(linspace(eps, n_groups, obj.P)); %in this function,
-        obj.validateGroupStructure(v_group_structure);
+        validateGroupStructure(v_group_structure);
         % the group structure is used to create groups of colinear X        
         v_true_w        = double(rand(obj.P, 1) < obj.sparsity); % sparse coefs
         
