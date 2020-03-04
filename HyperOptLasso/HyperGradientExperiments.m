@@ -10,7 +10,7 @@ classdef HyperGradientExperiments
         b_colinear = 0;    %introduce colinear variables when creating 
         % synthetic data (see set_up_data method)
         
-        ch_prefix = 'HG'
+        ch_prefix = 'HG2'
     end
       
 methods % Constructor and data-generating procedures
@@ -19,6 +19,7 @@ methods % Constructor and data-generating procedures
         addpath('Stepsizes/')
         addpath('utilities/')
         addpath('competitors/')
+        addpath('OfflineEstimators/')
     end
     
     function v_y = generate_y_data(obj, m_X, v_true_w)
@@ -137,6 +138,7 @@ methods % Experiments
             
     % Gradient descent, comparison with grid-search Leave one out
     function F = experiment_10(obj)
+        obj.P = 100;
         obj.n_train = 200;
         [A_train, y_train] = obj.generate_pseudo_streaming_data();
         
@@ -184,19 +186,20 @@ methods % Experiments
         [A_train, y_train] = obj.generate_pseudo_streaming_data();
         
         hgl = HyperGradientLasso;
-        hgl.stepsize_lambda = 1e-2;
+        hgl.stepsize_lambda = 1e-3;
         hgl.momentum_lambda = 0.9;
         hgl.tol_w = 1e-2;
         hgl.tol_g_lambda = 1e-4;
         hgl.max_iter_outer = 400;  %! 40
         
         hsgd = HyperSubGradientDescent;
-        hsgd.estimator = 'lasso';
-        hsgd.stepsize_lambda = 1e-2;
+        hsgd.s_estimator = 'lasso';
+        hsgd.stepsize_lambda = 1e-3;
         hsgd.momentum_lambda = 0.9;
         hsgd.tol_w = 1e-2;
         hsgd.tol_g_lambda = 1e-4;
         hsgd.max_iter_outer = 400; %! 40,  100
+        hsgd.s_method_Z = 'linsolve';
         
         [m_W_paper, v_lambda_paper, v_it_count_paper] = ...
             hsgd.solve_gradient(A_train, y_train);
@@ -216,7 +219,7 @@ methods % Experiments
         figure(exp_no*100+1); clf
         obj.show_lambda_vs_ista_iterates({v_lambda, v_lambda_paper},...
             {v_it_count, v_it_count_paper})                
-        legend({'Iterative', 'Inversion'})
+        legend({'Interleave', 'Solve linear system'})
         
         figure(exp_no*100+2); clf
         plot(v_looLambdas, v_looErrors)
@@ -236,8 +239,87 @@ methods % Experiments
     % concluded that in the offline HSGD the best iterative way to solve
     % for z is to initialize in the previous z and do the "natural
     % iterations" based on the fixed-point equation in the paper.
-
     
+    function F = experiment_18(obj)
+        obj.P = 10;       
+        obj.n_train = 12;
+        [A_train, y_train] = obj.generate_pseudo_streaming_data();
+        
+        n_groups = 2;
+        group_size = 5;
+        
+        s_estimators = {'lasso', 'group-lasso', ...
+            'weighted-lasso', 'weighted-group-lasso'};
+        s_methods_Z  = { 'linsolve', ... 'iterate',
+            'lsqminnorm', 'interleave', 'interleave-fast', 'none' };
+        v_online = [0 1];
+        v_memory = [1]; %  0
+        
+        hsgd = HyperSubGradientDescent;
+        hsgd.stepsize_lambda = 1e-3;
+        hsgd.momentum_lambda = 0.9;
+        hsgd.tol_w = 1e-2;
+        hsgd.tol_g_lambda = 1e-4;
+        hsgd.max_iter_outer = 400; %! 40,  100
+%         for k_e = 1:length(s_estimators)
+%             for k_m = 1:length(s_methods_Z)
+%                 for k_o = 1:length(v_online)
+%                     for k_mem = 1:length(v_memory)
+                        hsgd.s_estimator = 'group-lasso';
+                        hsgd.v_group_structure = kron(1:n_groups, ones(1, group_size));
+                        
+                        [m_W, v_lambda, v_it_count] = ...
+                            hsgd.solve_gradient(A_train, y_train);
+%                     end
+%                 end
+%             end
+%         end
+        F = 0;
+    end
+
+
+    % This one is just to check that all options run correctly
+    function F = experiment_19(obj)
+        obj.P = 10;       
+        obj.n_train = 20;
+        [A_train, y_train] = obj.generate_pseudo_streaming_data();
+        
+        n_groups = 2;
+        group_size = 5;
+        
+        s_estimators = {'lasso', 'group-lasso', ...
+            'weighted-lasso', 'weighted-group-lasso'};
+        s_methods_Z  = { 'linsolve', ... 'iterate',
+            'lsqminnorm', 'interleave', 'interleave_fast', 'none' };
+        v_online = [0 1];
+        v_memory = [1]; %  0
+        
+        hsgd = HyperSubGradientDescent;
+        hsgd.stepsize_lambda = 1e-3;
+        hsgd.momentum_lambda = 0.9;
+        hsgd.tol_w = 1e-2;
+        hsgd.tol_g_lambda = 1e-4;
+        hsgd.max_iter_outer = 400; %! 40,  100
+        for k_e = 1:length(s_estimators)
+            for k_m = 1:length(s_methods_Z)
+                for k_o = 1:length(v_online)
+                    for k_mem = 1:length(v_memory)
+                        hsgd.s_estimator = s_estimators{k_e};
+                        hsgd.s_method_Z = s_methods_Z{k_m};
+                        hsgd.b_online = v_online(k_o);
+                        hsgd.b_memory = v_memory(k_mem);
+                        hsgd.v_group_structure = kron(1:n_groups, ones(1, group_size));
+                        hsgd
+                        
+                        [m_W, v_lambda, v_it_count] = ...
+                            hsgd.solve_gradient(A_train, y_train);
+                    end
+                end
+            end
+        end
+        F = 0;
+    end
+
     %%
     % Gradient Descent vs Online Gradient Descent
     % GD vs OGD
@@ -306,7 +388,7 @@ methods % Experiments
         
         %%
         hsgd = HyperSubGradientDescent;
-        hsgd.estimator = 'lasso';
+        hsgd.s_estimator = 'lasso';
         hsgd.tol_w = my_tol_w;
         hsgd.tol_g_lambda = my_tol_g;
 
@@ -365,7 +447,7 @@ methods % Experiments
     end
 
     % This one is only to make sure that HyperSubGradientDescent with 
-    % property method_Z set to 'iterate' does the same as
+    % property method_Z set to 'interleave' does the same as
     % HyperGradientLasso
     function F = experiment_22(obj)
         obj.P = 100;
@@ -378,7 +460,7 @@ methods % Experiments
         
         %%
         hsgd = HyperSubGradientDescent;
-        hsgd.estimator = 'lasso';
+        hsgd.s_estimator = 'lasso';
         hsgd.tol_w = my_tol_w;
         hsgd.tol_g_lambda = my_tol_g;
 
@@ -388,7 +470,7 @@ methods % Experiments
         ohsgd.momentum_lambda = 0.9;
         ohsgd.max_iter_outer = 10000;
         
-        ohsgd.method_Z = 'iterate';
+        ohsgd.s_method_Z = 'interleave';
         
         %%
         hgl_offline = HyperGradientLasso;
@@ -456,20 +538,20 @@ methods % Experiments
         
         %%
         hsgd_it = HyperSubGradientDescent;
-        hsgd_it.estimator = 'lasso';
+        hsgd_it.s_estimator = 'lasso';
         hsgd_it.tol_w = my_tol_w;
         hsgd_it.tol_g_lambda = my_tol_g;
         hsgd_it.stepsize_lambda = my_beta;
         hsgd_it.momentum_lambda = my_momentum;
-        hsgd_it.method_Z = 'iterate';
+        hsgd_it.s_method_Z = 'interleave';
 
         ohsgd_it = hsgd_it;
         ohsgd_it.b_online = 1;
         ohsgd_it.max_iter_outer = 10000;
         ohsgd_it.stepsize_lambda = my_beta/sqrt(obj.P);
         
-        hsgd_lin  = hsgd_it;   hsgd_lin.method_Z = 'linsolve';
-        ohsgd_lin = ohsgd_it; ohsgd_lin.method_Z = 'linsolve';
+        hsgd_lin  = hsgd_it;   hsgd_lin.s_method_Z = 'linsolve';
+        ohsgd_lin = ohsgd_it; ohsgd_lin.s_method_Z = 'linsolve';
         
         c_estimators = { hsgd_lin, ohsgd_lin, hsgd_it, ohsgd_it};
                        
@@ -508,6 +590,109 @@ methods % Experiments
         F = 0;
     end
     
+    % This function compares Offline and Online,  
+    % computing m_Z by linsolve   
+    % sweep over beta to get the fastest convergence
+    function F = experiment_24(obj)
+        obj.P = 100; 
+        obj.n_train = 200; %! 110
+        obj.seed = 4;
+        [A_train, y_train] = obj.generate_pseudo_streaming_data();
+        
+        my_tol_w    = 1e-3;
+        my_tol_g    = 0;
+        my_beta     = 1e-3;
+        my_momentum = 0.9;
+        
+        %%
+        hsgd_it = HyperSubGradientDescent;
+        hsgd_it.s_estimator = 'lasso';
+        hsgd_it.tol_w = my_tol_w;
+        hsgd_it.tol_g_lambda = my_tol_g;
+        hsgd_it.stepsize_lambda = my_beta;
+        hsgd_it.momentum_lambda = my_momentum;
+        hsgd_it.s_method_Z = 'interleave';
+
+        ohsgd_it = hsgd_it;
+        ohsgd_it.b_online = 1;
+        ohsgd_it.max_iter_outer = 10000;
+        ohsgd_it.stepsize_lambda = my_beta/sqrt(obj.P);
+        
+        hsgd_lin  = hsgd_it;   hsgd_lin.s_method_Z = 'linsolve';
+        ohsgd_lin = ohsgd_it; ohsgd_lin.s_method_Z = 'linsolve';
+        
+        c_estimators = { hsgd_lin, ohsgd_lin};
+        n_estimators = length(c_estimators);
+        
+        n_tol = 7;
+        v_betas      = logspace(-5,  -3, n_tol);
+
+                       
+        %%
+        t_average_w = zeros(obj.P, n_tol, n_estimators);
+        t_final_lambda = zeros(1, n_tol, n_estimators);
+        for k_e = 1:n_estimators
+            for k_t = 1:n_tol
+                estimator_now = c_estimators{k_e};
+                %estimator_now.tol_w = v_tolerances(k_t);
+                estimator_now.stepsize_lambda = v_betas(k_t);
+                [c_W{k_t, k_e}, c_lambda{k_t, k_e}, c_it_count{k_t, k_e}] = ...
+                    estimator_now.solve_gradient(A_train, y_train);
+                t_final_lambda(:, k_t, k_e) = mean( ...
+                    c_lambda{k_t, k_e}(find(c_it_count{k_t, k_e}>0,1, 'last')), 2);
+                t_average_w(:,k_t, k_e) = mean(c_W{k_t, k_e}, 2);
+            end
+        end
+        m_final_lambda = reshape(t_final_lambda, size(t_final_lambda, 1), ...
+            numel(t_final_lambda)/ size(t_final_lambda, 1));
+        
+        c_lambda_filtered = cell(size(c_lambda));
+        filter_length = obj.n_train;
+        for k =1:numel(c_lambda)
+            c_lambda_filtered{k} = filter(ones(1, filter_length), ...
+                filter_length, c_lambda{k});
+        end
+        
+        %%        
+        disp 'Computing loo errors' 
+        [v_looLambdas, v_looErrors, v_loo_error_final_lambdas] = obj.compute_loo_curve(...
+            m_final_lambda, linspace(0.4, 2.5, 11), ...
+            mean(mean(t_average_w, 2), 3), A_train, y_train);
+        
+        exp_no = obj.determine_experiment_number();
+        %% Figures
+        c_legend = cell(n_tol, n_estimators);
+        for k_e = 1:n_estimators
+            for k_t = 1:n_tol
+                c_legend{k_t, k_e} = sprintf('\\beta = %g', ...
+                    v_betas(k_t));
+            end
+        end
+        c_legend{1}     = [c_legend{1},    ', Offline'];
+        c_legend{k_t+1} = [c_legend{k_t+1}, ', Online'];
+        figure(exp_no*100+1); clf
+        obj.show_lambda_vs_ista_iterates(vec(c_lambda), vec(c_it_count));
+        legend(c_legend(:))
+        
+        figure(exp_no*100+2); clf
+        plot(v_looLambdas, v_looErrors)
+        xlabel '\lambda'
+        ylabel 'LOO error'
+        hold on
+        plot(m_final_lambda, v_loo_error_final_lambdas, 'xr')
+        ylim([0, 1])
+        xlim([0, max(v_looLambdas)])
+        
+        figure(exp_no*100+4); clf
+            obj.show_lambda_vs_ista_iterates(vec(c_lambda_filtered), vec(c_it_count));
+            legend(c_legend(:))
+
+        %% Save data
+        ch_resultsFile = sprintf('results_%s_%d', obj.ch_prefix, exp_no);
+        save(ch_resultsFile);
+        F = 0;
+    end
+
     % Online Gradient Descent
     % Comparing effect of different tolerances of ISTA
     % (inexact approximation -- with memory)
@@ -584,19 +769,19 @@ methods % Experiments
         
         %%
         hsgd_it = HyperSubGradientDescent;
-        hsgd_it.estimator = 'lasso';
+        hsgd_it.s_estimator = 'lasso';
         hsgd_it.tol_w = my_tol_w;
         hsgd_it.tol_g_lambda = my_tol_g;
         hsgd_it.stepsize_lambda = my_beta;
         hsgd_it.momentum_lambda = my_momentum;
-        hsgd_it.method_Z = 'iterate';
+        hsgd_it.s_method_Z = 'interleave';
 
         ohsgd_it = hsgd_it;
         ohsgd_it.b_online = 1;
         ohsgd_it.max_iter_outer = 10000; %! 1000
         
-        hsgd_lin  = hsgd_it;   hsgd_lin.method_Z = 'linsolve';
-        ohsgd_lin = ohsgd_it; ohsgd_lin.method_Z = 'linsolve';
+        hsgd_lin  = hsgd_it;   hsgd_lin.s_method_Z = 'linsolve';
+        ohsgd_lin = ohsgd_it; ohsgd_lin.s_method_Z = 'linsolve';
         
         c_estimators = {ohsgd_lin,  ohsgd_it};
         n_estimators = length(c_estimators);
@@ -675,19 +860,19 @@ methods % Experiments
         
         %%
         hsgd_it = HyperSubGradientDescent;
-        hsgd_it.estimator = 'lasso';
+        hsgd_it.s_estimator = 'lasso';
         hsgd_it.tol_w = my_tol_w;
         hsgd_it.tol_g_lambda = my_tol_g;
         hsgd_it.stepsize_lambda = my_beta;
         hsgd_it.momentum_lambda = my_momentum;
-        hsgd_it.method_Z = 'iterate';
+        hsgd_it.s_method_Z = 'interleave';
 
         ohsgd_it = hsgd_it;
         ohsgd_it.b_online = 1;
         ohsgd_it.max_iter_outer = 1000; %! 10000
         
-        hsgd_lin  = hsgd_it;   hsgd_lin.method_Z = 'linsolve';
-        ohsgd_lin = ohsgd_it; ohsgd_lin.method_Z = 'linsolve';
+        hsgd_lin  = hsgd_it;   hsgd_lin.s_method_Z = 'linsolve';
+        ohsgd_lin = ohsgd_it; ohsgd_lin.s_method_Z = 'linsolve';
         
         c_estimators = {ohsgd_lin,  ohsgd_it};
         n_estimators = length(c_estimators);
@@ -781,19 +966,19 @@ methods % Experiments
         
         %%
         hsgd_it = HyperSubGradientDescent;
-        hsgd_it.estimator = 'lasso';
+        hsgd_it.s_estimator = 'lasso';
         hsgd_it.tol_w = my_tol_w;
         hsgd_it.tol_g_lambda = my_tol_g;
         hsgd_it.stepsize_lambda = my_beta;
         hsgd_it.momentum_lambda = my_momentum;
-        hsgd_it.method_Z = 'iterate';
+        hsgd_it.s_method_Z = 'interleave';
 
         ohsgd_it = hsgd_it;
         ohsgd_it.b_online = 1;
         ohsgd_it.max_iter_outer = 10000; 
         
-        hsgd_lin  = hsgd_it;   hsgd_lin.method_Z = 'linsolve';
-        ohsgd_lin = ohsgd_it; ohsgd_lin.method_Z = 'linsolve';
+        hsgd_lin  = hsgd_it;   hsgd_lin.s_method_Z = 'linsolve';
+        ohsgd_lin = ohsgd_it; ohsgd_lin.s_method_Z = 'linsolve';
         
         c_estimators = {ohsgd_lin};
         n_estimators = length(c_estimators);
@@ -1351,7 +1536,7 @@ methods (Static) % Routines such as out-of-sample error calculations
             m_Phi = m_X*m_X'/N ;
         end
         v_r = m_X*v_y(:)/N;
-        my_alpha = 10/trace(m_Phi);
+        my_alpha = 1/eigs(m_Phi, 1);
         hl = OHO_Lasso;
         hl.tol_w = 1e-4;
         v_looErrors = zeros(N,1);
@@ -1368,6 +1553,7 @@ methods (Static) % Routines such as out-of-sample error calculations
     end
     
     function v_looErrors = compute_loo_errors(st_hyperparams, v_w_0, m_X, v_y)
+        % CAN BE DELETED
         
         v_looErrors = nan(size(st_hyperparams));
         for k = 1:length(st_hyperparams)
@@ -1396,8 +1582,15 @@ methods (Static) % Routines such as out-of-sample error calculations
             st_hyperparams_loo(k).lambda = v_looLambdas(k);
         end
         
-        v_looErrors = HyperGradientExperiments.compute_loo_errors(...
-            st_hyperparams_loo, v_w_in, m_X, v_y);
+%         v_looErrors = HyperGradientExperiments.compute_loo_errors(...
+%             st_hyperparams_loo, v_w_in, m_X, v_y);
+        
+        v_looErrors = nan(size(st_hyperparams_loo));
+        for k = 1:length(st_hyperparams_loo) % main loop
+            v_looErrors(k) = HyperGradientExperiments.exact_loo(m_X, v_y,...
+                st_hyperparams_loo(k), v_w_in);
+        end
+        
         v_looErrors_lambda_0 = zeros(size(v_lambda_0));
         for k = 1:length(v_lambda_0)
             ind_lambda_0 = find(v_looLambdas==v_lambda_0(k), 1,'first');
