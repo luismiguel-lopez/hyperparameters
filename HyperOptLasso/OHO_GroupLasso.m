@@ -22,17 +22,10 @@ end
 
 methods   
     function [v_lambda, v_it_count, w_out] ... %TODO: output w_jackknife
-            = solve_approx_mirror(obj, m_X, v_y, v_group_structure)
+            = solve_approx_mirror(obj, m_X, v_y, v_groupStructure)
         
-        %check sanity of group structure vector:
-        % all natural numbers
-        assert(all(v_group_structure==abs(round(v_group_structure))), ...
-            'All entries in v_group_structure must be natural numbers')
-        assert(min(v_group_structure), 'group labels must start by 1')
-        for gr = 1:max(v_group_structure)
-            assert(sum(v_group_structure==gr)>0, ...
-                'groups must be labeled with consecutive numbers')
-        end
+        % check sanity of group structure vector
+        validateGroupStructure(v_groupStructure);
         
         N = length(v_y); assert(size(m_X, 1)==N);
         P = size(m_X, 2); % m_X is NxP
@@ -44,7 +37,7 @@ methods
         v_lambda(1) = lambda_max.*obj.normalized_lambda_0;
         
         v_w_0 = obj.ista_group(zeros(P,1), m_Phi, v_r, alpha, ...
-            v_lambda(1), v_group_structure);
+            v_lambda(1), v_groupStructure);
         %v_w_0 = zeros(P,1); %used this line to look in the oos-error
         if obj.b_memory
             m_W = repmat(sparse(v_w_0), [1 N]); % fast initialization
@@ -77,15 +70,15 @@ methods
                 v_r_j   = v_r   - v_y(j)* v_x_j;
                 if obj.b_memory
                     [v_w_j, v_w_f, niter_out] = obj.ista_group(m_W(:,j), ...
-                        m_Phi_j, v_r_j, alpha, v_lambda(k-1), v_group_structure);
+                        m_Phi_j, v_r_j, alpha, v_lambda(k-1), v_groupStructure);
                     m_W(:,j) = v_w_j;
                 else
                     [v_w_j, v_w_f, niter_out] = obj.ista_group(v_w_j, ...
-                         m_Phi_j, v_r_j, alpha, v_lambda(k-1), v_group_structure);
+                         m_Phi_j, v_r_j, alpha, v_lambda(k-1), v_groupStructure);
                     v_w_j = sparse(v_w_j);
                 end
                 [v_z_j, v_zHard_j] = obj.zGroup(v_w_f, ...
-                    alpha*v_lambda(k-1), v_group_structure);
+                    alpha*v_lambda(k-1), v_groupStructure);
                
                 my_alpha = alpha; % version that actually works
                 %my_alpha = -alpha; % this does not work
@@ -156,11 +149,11 @@ methods
         %output
         if obj.b_memory
             w_jackknife = mean(m_W, 2); %jackknife estimator?
-            w_out = obj.ista_group(w_jackknife, m_Phi, v_r, alpha, v_lambda(k), v_group_structure);
+            w_out = obj.ista_group(w_jackknife, m_Phi, v_r, alpha, v_lambda(k), v_groupStructure);
         else
             obj.tol = 1e-4;
             %TODO: w_jackknife = running average of w_j's
-            w_out = obj.ista_group(v_w_j, m_Phi, v_r, alpha, v_lambda(k), v_group_structure);
+            w_out = obj.ista_group(v_w_j, m_Phi, v_r, alpha, v_lambda(k), v_groupStructure);
         end
     end
     
