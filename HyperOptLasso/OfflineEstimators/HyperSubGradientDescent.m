@@ -1,5 +1,7 @@
 classdef HyperSubGradientDescent
-    % Online Hyperparameter optimization for the Lasso
+    % Online Hyperparameter optimization for several estimators.
+    % In the current version, it works for Lasso and it is being
+    % developed to work with Group Lasso as well.
     
 properties
     
