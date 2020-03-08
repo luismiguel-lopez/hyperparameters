@@ -10,7 +10,7 @@ classdef HyperGradientExperiments
         b_colinear = 0;    %introduce colinear variables when creating 
         % synthetic data (see set_up_data method)
         
-        ch_prefix = 'HG2'
+        ch_prefix = 'HG'
     end
       
 methods % Constructor and data-generating procedures
@@ -240,6 +240,7 @@ methods % Experiments
     % for z is to initialize in the previous z and do the "natural
     % iterations" based on the fixed-point equation in the paper.
     
+    % this experiment checks correct functioning for a given option
     function F = experiment_18(obj)
         obj.P = 10;       
         obj.n_train = 12;
@@ -1076,10 +1077,9 @@ methods % Experiments
 
    
     % Online Gradient Descent
-    % With-memory, memoryless, and OHO (old
-    % version).
+    % HyperGradientLasso (old version) and OHO (older version).
     % Memoryless fails if executed with very coarse tolerance.
-    function F = experiment_4(obj)
+    function F = experiment_40(obj)
         obj.n_train = 200;
         obj.seed = 10;
         [A_train, y_train] = obj.generate_pseudo_streaming_data();
@@ -1153,6 +1153,89 @@ methods % Experiments
         F = 0;
     end
 
+    % Online Gradient Descent
+    % HyperGradientLasso (old version) and OHO (older version).
+    % Memoryless fails if executed with very coarse tolerance.
+    % TODO: currently this is a copy of experiment_40. I have to
+    % rewrite it using the HyperSubGradientDescent class, confirm that it
+    % does the same and play a bit to get to know what happens when 
+    % we use online, inexact, memoryless (which is expected to be the
+    % big-data-ready algorithm).
+    function F = experiment_41(obj)
+        obj.n_train = 200;
+        obj.seed = 10;
+        [A_train, y_train] = obj.generate_pseudo_streaming_data();
+        
+        hgl_memory = HyperGradientLasso;
+        hgl_memory.b_online = 1;
+        hgl_memory.stepsize_lambda = 1e-4;
+        hgl_memory.tol_w = 1e-2;
+        hgl_memory.tol_g_lambda = 1e-4;
+        hgl_memory.max_iter_outer = 10000;
+        
+        hgl_no_mem = hgl_memory;
+        hgl_no_mem.max_iter_outer = 2000;
+        hgl_no_mem.stepsize_lambda = 1e-4;
+        hgl_no_mem.tol_w = 1e-2; % 1e-1 is too coarse. 1e-2 is ok.
+        hgl_no_mem.b_memory = 0;
+        
+        [m_W_memory, v_lambda_memory, v_it_count_memory] = ...
+            hgl_memory.solve_gradient(A_train, y_train);
+        final_lambda_memory = v_lambda_memory(find(v_it_count_memory>0,1, 'last'));
+        average_w = mean(m_W_memory, 2);
+              
+        [m_W_nomem, v_lambda_nomem, v_it_count_nomem] = ...
+            hgl_no_mem.solve_gradient(A_train, y_train);
+        final_lambda_nomem = v_lambda_nomem(find(v_it_count_nomem>0,1, 'last'));
+        
+%         dlh = FranceschiRecursiveLasso; % Dynamic
+%         dlh.stepsize_w = 3e-4;
+%         dlh.stepsize_lambda = 1e-4;
+%         
+%         niter_dynamic = 10000;
+%         [m_W_dynamic, v_lambda_dynamic] = obj.drill_dynamic( ...
+%             dlh, A_train, y_train, 0, niter_dynamic);
+        
+        hl = OHO_Lasso;
+        hl.mirror_type = 'grad';
+        hl.b_online = 1;
+        hl.b_memory = 0;
+        hl.max_iter_outer= 2500;
+        hl.stepsize_policy = ConstantStepsize;
+        hl.tol_w = 1e0;
+        hl.stepsize_policy.eta_0 = 1e-2;
+        [v_lambda_OHO, v_count_OHO] ...
+            = hl.solve_approx_mirror(A_train', y_train);
+       
+        disp 'Computing loo errors' 
+        [v_looLambdas, v_looErrors, loo_error_final_lambda_nomem] = ...
+            obj.compute_loo_curve(final_lambda_nomem, linspace(...
+            0.2, ...1.1*final_lambda_nomem  -0.1*final_lambda_memory, ...
+            0.7, ...1.1*final_lambda_memory -0.1*final_lambda_nomem,  ...
+            21)./final_lambda_nomem, ...
+            average_w, A_train, y_train);
+        
+        exp_no = obj.determine_experiment_number();
+        %% Figures
+        figure(exp_no*100+1); clf
+        obj.show_lambda_vs_ista_iterates({v_lambda_memory, v_lambda_nomem, v_lambda_OHO},...
+            {v_it_count_memory, v_it_count_nomem, v_count_OHO})                
+        legend({'With-memory', 'Memoryless', 'OHO'})
+        
+        figure(exp_no*100+2); clf
+        plot(v_looLambdas, v_looErrors)
+        xlabel '\lambda'
+        ylabel 'LOO error'
+        hold on
+        plot(final_lambda_nomem, loo_error_final_lambda_nomem, 'xr')
+        
+        %% Save data
+        ch_resultsFile = sprintf('results_%s_%d', obj.ch_prefix, exp_no);
+        save(ch_resultsFile);
+        F = 0;
+    end
+
+    
     % Online Gradient Descent
     % With-memory, memoryless and OHO (old version)
     % An example where OHO works ok (see experiment_6 for an example where
