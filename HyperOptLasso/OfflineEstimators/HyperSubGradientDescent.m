@@ -42,16 +42,16 @@ methods
         % solves the outer problem via gradient descent (with momentum)
               
         [P, N] = size(m_X); assert(length(v_y) == N);
-        m_F = m_X*m_X'/N;
-        v_r = m_X*v_y(:)/N;
+        m_F = m_X*m_X'/N;    % Phi matrix
+        v_r = m_X*v_y(:)/N;  % r   vector
         
         if isempty(obj.stepsize_w)
             obj.stepsize_w = 1/(2*eigs(m_F,1));
         end
         
-        v_it_count  = nan(1, obj.max_iter_outer);
-        v_lambda    = nan(1, obj.max_iter_outer);
-        v_velocity  = zeros(1, obj.max_iter_outer);
+        v_it_count  = nan(1, obj.max_iter_outer); % iteration counts
+        v_lambda    = nan(1, obj.max_iter_outer); % sequence of lambdas
+        v_velocity  = zeros(1, obj.max_iter_outer); % (if grad with momentum)
         try
             v_lambda(1) = lambda_0;
         catch ME %#ok<NASGU>
