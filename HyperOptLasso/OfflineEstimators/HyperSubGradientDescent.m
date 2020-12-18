@@ -25,18 +25,19 @@ properties
     s_method_Z = 'linsolve'; %options: 
     % linsolve, lsqminnorm, interleave, interleave-fast, iterate
     
+    b_w_sparse = 1;
+    
     v_group_structure = [];
     
     param_c = 0; % We multiply the c variable (Jacobian of the validation 
                  % cost with respect to w) by this parameter(factor)
-                 % (this is for the memoryless)
-                
-    
+                 % (this is for the memoryless)              
+                 
 end
 
 methods
     
-    function [m_W, v_lambda, v_it_count] = solve_gradient(obj, ...
+    function [m_W, v_lambda, v_it_count, v_inv_count, v_timing] = solve_gradient(obj, ...
             m_X, v_y, lambda_0)
         % Hyperparameter optimization [lopez2020online]
         % solves the outer problem via gradient descent (with momentum)
@@ -49,7 +50,7 @@ methods
             obj.stepsize_w = 1/(2*eigs(m_F,1));
         end
         
-        v_it_count  = nan(1, obj.max_iter_outer); % iteration counts
+        [v_it_count, v_inv_count, v_timing] = deal(nan(1, obj.max_iter_outer)); % iteration counts
         v_lambda    = nan(1, obj.max_iter_outer); % sequence of lambdas
         v_velocity  = zeros(1, obj.max_iter_outer); % (if grad with momentum)
         try
@@ -63,11 +64,17 @@ methods
             validateGroupStructure(obj.v_group_structure);
         end
         
-        [v_w_0, m_Z_0, v_it_count(1)] = obj.ista_fg(...
+        timing_reference = tic;
+        [v_w_0, m_Z_0, v_it_count(1), ~, v_inv_count(1)] = obj.ista_fg(...
             zeros(P, 1), m_F, v_r, v_lambda(1), zeros(P, 1));
+        v_timing(1) = toc (timing_reference);
         
         if obj.b_memory %initialize m_W
-            m_W = repmat(sparse(v_w_0), [1 N]);
+            if obj.b_w_sparse
+                m_W = repmat(sparse(v_w_0), [1 N]);
+            else
+                m_W = repmat(v_w_0, [1 N]);
+            end
             t_C = repmat(m_Z_0, [1 1 N]); %TODO: consider using a cell 
             % if m_z_0 has sparsity and we want to use it
         else
@@ -89,27 +96,36 @@ methods
                 v_indices_k = 1:N; 
             end
             v_it_count(k_outer) = 0;
+            v_inv_count(k_outer) = 0;
             for j = v_indices_k
                 v_x_j = m_X(:, j);
-                m_F_j = m_F - v_x_j*v_x_j'/N;
-                v_r_j = v_r - v_x_j*v_y(j)/N;
+                m_F_j = (N*m_F - v_x_j*v_x_j')/(N-1);
+                v_r_j = (N*v_r - v_x_j*v_y(j))/(N-1);
                 % v_c_previous = t_C(:,:,j); %! for debugging
                 if obj.b_memory 
-                    [v_w_j, m_Z_j, v_it_count_j] = obj.ista_fg(...
+                    [v_w_j, m_Z_j, v_it_count_j, ~, v_inv_count_j] = obj.ista_fg(...
                         m_W(:, j), m_F_j, v_r_j, v_lambda(k_outer-1), t_C(:,:,j));
                     
                     m_W(:, j)  = v_w_j;
-                    t_C(:,:,j) = m_Z_j;
+                    t_C(:,:,j) = full(m_Z_j);
                 else                    
-                    [v_w_j, m_Z_j, v_it_count_j] = obj.ista_fg(...
+                    [v_w_j, m_Z_j, v_it_count_j, ~, v_inv_count_j] = obj.ista_fg(...
                         v_w_j, m_F_j, v_r_j, v_lambda(k_outer-1), ...
                         obj.param_c*m_Z_j); 
                                         
                     v_w_j = sparse(v_w_j); %TODO: check if this is really needed
                 end
-                
-                sum_g = sum_g + (m_Z_j'*v_x_j)*(v_x_j'*v_w_j - v_y(j));
-                v_it_count(k_outer) = v_it_count(k_outer) + v_it_count_j;
+                v_Zx_j = (m_Z_j'*v_x_j);                
+                % Lines to confirm that we can calculate v_Zx_j with the
+                % fast method for Lasso (25/11/2020)
+                v_v = -sign(v_w_j(v_w_j~=0));
+                v_t = v_x_j(v_w_j~=0);
+                v_psi = N*m_F(v_w_j~=0, v_w_j~=0);
+                v_psinvz = v_psi\v_t;
+                v_Zx_j_2 = (N-1)*v_v'*v_psinvz/(1-v_t'*v_psinvz);
+                sum_g = sum_g + v_Zx_j*(v_x_j'*v_w_j - v_y(j));
+                v_it_count(k_outer)  = v_it_count (k_outer) + v_it_count_j;
+                v_inv_count(k_outer) = v_inv_count(k_outer) + v_inv_count_j;
                 %ltc_j.go(j);
             end
             mean_g = sum_g/length(v_indices_k);
@@ -140,6 +156,7 @@ methods
                 disp 'Reached Stopping criterion.'
                 break
             end
+            v_timing(k_outer) = toc (timing_reference);
             ltc.go(k_outer);
         end
         if k_outer == obj.max_iter_outer
@@ -150,7 +167,7 @@ methods
         end
     end
     
-    function [v_w, m_Z_tilde_out, it_count, v_w_f] = ista_fg(obj, ...
+    function [v_w, m_Z_tilde_out, it_count, v_w_f, inv_count] = ista_fg(obj, ...
             v_w, m_F, v_r, v_lambda, m_Z_tilde_in)
         % Iterative soft thresholding algorithm (ISTA)
         % and Franceschi's forward gradient 
@@ -160,6 +177,7 @@ methods
         
         alpha = obj.stepsize_w;
         it_count = obj.max_iter_inner;
+        inv_count = 0;
         assert(any(strcmp(obj.s_method_Z, { 'iterate', 'linsolve', ...
             'lsqminnorm', 'interleave', 'interleave-fast', 'none' } )), ...
             'unrecognized option for s_method_Z');
@@ -170,7 +188,7 @@ methods
             %check stopping criterion
             v_grad_violations = (v_grad.*sign(v_w) + v_lambda).*(v_w~=0);
             if       norm(v_grad_violations) < obj.tol_w   ...
-                  && all(abs(v_grad).*(v_w==0) < v_lambda)   ...
+                  && all(abs(v_grad).*(v_w==0) <= v_lambda)   ... !% '<' --> '<='
                   && k_inner > obj.min_iter_inner
                 it_count = k_inner-1;
                 break;
@@ -199,12 +217,16 @@ methods
                 v_w_f, v_lambda);
             m_toInvert = (eye(P)-m_A_tilde*(eye(P)-alpha*m_F));
             m_Z_tilde_out = feval(obj.s_method_Z, m_toInvert, m_B_tilde);
+            inv_count = inv_count+1;
         elseif strcmp(obj.s_method_Z, {'iterate'})
             error 'not implemented yet'
             %
             % TODO: iteratively solve for Z based on (10)
             %
-        else, m_Z_tilde_out = m_Z_tilde;
+        elseif strcmp(ob.s_method_Z, 'nop')
+            m_Z_tilde_out = m_Z_tilde;
+        else
+            error 'unrecognized option'
         end
     end
     

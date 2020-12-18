@@ -1,10 +1,10 @@
 %% Offline Estimators
 
-% First version: OHO_Lasso, OHO_GroupLasso, OHO_ElasticNet
+% First version: OHO_Lasso, OHO_GroupLasso, OHO_ElasticNet.
 % These ones use the simplified gradient which I believed would correctly
-% approximate the exact gradient.
+% approximate the exact gradient (but it does not).
 %
-% Second version: HyperGradientLasso and two backup files
+% Second version: HyperGradientLasso and two backup files.
 % these ones contain the correct gradient but they are encompassed by 
 % HyperSubGradientDescent with s_estimator set to 'lasso'. There are
 % several experiments in HyperGradientExperiments that confirm that both

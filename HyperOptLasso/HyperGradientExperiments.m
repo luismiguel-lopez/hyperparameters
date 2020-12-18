@@ -11,6 +11,7 @@ classdef HyperGradientExperiments
         % synthetic data (see set_up_data method)
         
         ch_prefix = 'HG'
+        b_loo_inParallel = 0;
     end
       
 methods % Constructor and data-generating procedures
@@ -34,7 +35,7 @@ methods % Constructor and data-generating procedures
             = generate_pseudo_streaming_data(obj)
         %create train and test data
         rng(obj.seed);
-        v_true_w        = double(rand(obj.P, 1) < obj.sparsity); % sparse coefs
+        v_true_w      = double(rand(obj.P, 1) < obj.sparsity); % sparse coefs
         m_X           = randn(obj.P, obj.n_train); % time series of x vectors
         m_X_test      = randn(obj.P, obj.n_test); % time series of x vectors
 
@@ -322,8 +323,9 @@ methods % Experiments
     end
 
     %%
-    % Gradient Descent vs Online Gradient Descent
     % GD vs OGD
+    % Gradient Descent vs Online Gradient Descent    
+    % experiment with old code (hyperGradientLasso)
     function F = experiment_20(obj)
         obj.n_train = 200;
         [A_train, y_train] = obj.generate_pseudo_streaming_data();
@@ -1658,8 +1660,17 @@ methods (Static) % Routines such as out-of-sample error calculations
         else
             v_lambdas_sweep = mean(v_lambda_0)*v_factors;
         end
-        v_looLambdas = sort(unique([v_lambda_0 v_lambdas_sweep]));
+
+        b_inParallel = 1;
+        [v_looLambdas, v_looErrors, v_looErrors_lambda_0, st_hyperparams_loo] =...
+            HyperGradientExperiments.compute_loo_curve_sweep(...
+            v_lambda_0, v_lambdas_sweep, v_w_in, m_X, v_y, b_inParallel);
+    end
         
+    function [v_looLambdas, v_looErrors, v_looErrors_lambda_0, st_hyperparams_loo] = ...
+            compute_loo_curve_sweep(v_lambda_0, v_lambdas_sweep, v_w_in, m_X, v_y, b_inParallel)
+        
+        v_looLambdas = sort(unique([v_lambda_0 v_lambdas_sweep]));
         st_hyperparams_loo = struct;
         for k =1:length(v_looLambdas)
             st_hyperparams_loo(k).lambda = v_looLambdas(k);
@@ -1669,9 +1680,16 @@ methods (Static) % Routines such as out-of-sample error calculations
 %             st_hyperparams_loo, v_w_in, m_X, v_y);
         
         v_looErrors = nan(size(st_hyperparams_loo));
-        for k = 1:length(st_hyperparams_loo) % main loop
-            v_looErrors(k) = HyperGradientExperiments.exact_loo(m_X, v_y,...
-                st_hyperparams_loo(k), v_w_in);
+        if b_inParallel
+            parfor k = 1:length(st_hyperparams_loo) % main loop
+                v_looErrors(k) = HyperGradientExperiments.exact_loo(m_X, v_y,...
+                    st_hyperparams_loo(k), v_w_in);
+            end
+        else
+            for k = 1:length(st_hyperparams_loo) % main loop
+                v_looErrors(k) = HyperGradientExperiments.exact_loo(m_X, v_y,...
+                    st_hyperparams_loo(k), v_w_in);
+            end
         end
         
         v_looErrors_lambda_0 = zeros(size(v_lambda_0));
@@ -1682,7 +1700,7 @@ methods (Static) % Routines such as out-of-sample error calculations
     end
     
     function n = determine_experiment_number
-        % returns a string with the experiment number.
+        % returns the experiment number.
         % Requires that the experiment functions are named exactly
         % 'experiment_%d', where %d is the experiment number.
         s = dbstack;
@@ -1708,6 +1726,30 @@ methods (Static) % Plotting
             hold on
         end
         xlabel('# ISTA iterations')
+        ylabel '\lambda'
+    end
+    
+    function show_lambda_vs_matrix_inversions(c_lambdas, c_invcounts, n_resetAfter, c_markers)
+        if not(exist('n_resetAfter', 'var'))
+            n_resetAfter = 10000;
+        end
+        if not(exist('c_markers', 'var'))
+            c_markers = cell(size(c_lambdas));
+            for km=1:numel(c_markers)
+                c_markers{km} = 'none';
+            end
+        end
+        for k = 1:length(c_lambdas)
+            plot(cumsum(c_invcounts{k}), c_lambdas{k}, 'Marker', c_markers{k}); 
+            hold on
+            if mod(k, n_resetAfter)==0
+                set(gca, 'ColorOrderIndex', 1)
+%                 if exist('ch_newMarker', 'var')
+%                     myMarker = ch_newMarker;
+%                 end
+            end
+        end
+        xlabel('# matrix inversions')
         ylabel '\lambda'
     end
 end
